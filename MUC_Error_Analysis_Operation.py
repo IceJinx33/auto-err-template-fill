@@ -233,6 +233,27 @@ class Mentions:
     def __str__(self):
         return "[" + ", ".join([str(mention) for mention in self.mentions]) + "]"
 
+    @staticmethod
+    def str_from_doc(r):
+        result = ""
+        for mention_or_mentions in r.mentions:
+            if isinstance(mention_or_mentions, Mention):
+                result+='('
+                mention = mention_or_mentions
+                result += mention.from_doc()
+                if mention != r.mentions[-1]:
+                    result += "), "
+                else:
+                    result += ")"
+            else:
+                result += "("
+                for mention in mention_or_mentions.mentions:
+                    result += mention.from_doc()
+                    if mention != mention_or_mentions.mentions[-1]:
+                        result += ", "
+                result += ")"
+        return result
+
 
 # The data associated with a field in a template
 class Role:
@@ -516,9 +537,9 @@ class TemplateTransformation:
                 result += str(self.predicted)
                 result += '\n'
         for role in self.role_transformations.keys():
-            result += role + ' ' + str(self.predicted.roles[role]) + "===" + str(
+            result += role + ': ' + Mentions.str_from_doc(self.predicted.roles[role]) + "===" + str(
                 self.role_transformations[role]) + "===>" + \
-                      str(self.gold.roles[role]) + '\n'
+                      Mentions.str_from_doc(self.gold.roles[role]) + '\n'
         return result
 
 
@@ -551,7 +572,7 @@ def transform(predicted_summary, gold_summary):
 data, docs = from_file(
     "/Users/barry/Library/Mobile Documents/com~apple~CloudDocs/Cornell/Research/Cornell Summer 2021/Code/Err-Analysis/Manual Result/gtt_muc_1_preds.out")
 for pair in data[:50]:
-    analyze(*pair)
+    # analyze(*pair)
     transform(*pair)
 
 # endregion
