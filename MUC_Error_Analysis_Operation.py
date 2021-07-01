@@ -1,7 +1,7 @@
 import json
 import re
 import string
-
+import copy
 
 # region helpers
 def all_matchings(a, b):
@@ -18,7 +18,7 @@ def all_matchings(a, b):
     return matchings
 
 
-def normalize_string(s, for_doc=False):
+def normalize_string_old(s, for_doc=False):
     """Lower text and remove punctuation, articles and extra whitespace."""
 
     def remove_articles(text):
@@ -42,6 +42,11 @@ def normalize_string(s, for_doc=False):
     return white_space_fix(remove_articles(remove_punc(
         remove_hyphens(lower(s)))))  # if not for_doc else white_space_fix(remove_punc(remove_hyphens(lower(s))))
 
+def normalize_string(s):
+    """Lower text and remove punctuation, articles and extra whitespace."""
+    regex = re.compile(r'\b(a|an|the)\b', re.UNICODE)
+    s = re.sub(regex, ' ', s.lower())
+    return ' '.join([c for c in s if c.isalnum()])
 
 def mention_tokens_index(doc, mention):
     """
@@ -92,7 +97,7 @@ def from_file(input_file):
         gold_templates = []
 
         example = inp_dict[docid]
-        doc_tokens = normalize_string(example["doctext"].replace(" ##", ""), True).split()
+        doc_tokens = normalize_string(example["doctext"].replace(" ##", "")).split()
         documents[docid] = doc_tokens
 
         for pred_temp in example["pred_templates"]:
@@ -106,7 +111,7 @@ def from_file(input_file):
                     for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
-                        mentions.append(Mention(docid, span))
+                        mentions.append(Mention(docid, span, mention))
                 roles[role] = Role(docid, mentions, False)
             pred_templates.append(Template(docid, incident, roles, False))
 
@@ -122,7 +127,7 @@ def from_file(input_file):
                     for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
-                        mentions.append(Mention(docid, span))
+                        mentions.append(Mention(docid, span, mention))
                     coref_mentions.append(Mentions(docid, mentions))
                 roles[role] = Role(docid, coref_mentions, True)
             gold_templates.append(Template(docid, incident, roles, True))
@@ -162,9 +167,10 @@ scoring_mode = "All_Templates"  # From ["All_Templates", "Matched/Spurious", "Ma
 
 # A single mention
 class Mention:
-    def __init__(self, doc_id, span):
+    def __init__(self, doc_id, span, literal):
         self.doc_id = doc_id
         self.span = span  # a pair of indices delimiting a string in the doc
+        self.literal = literal
 
     @staticmethod
     def compare(predicted_mention, gold_mentions,
@@ -212,9 +218,10 @@ class Mention:
         return result
 
     def from_doc(self):
-        doc_tokens = docs[self.doc_id]  # global variable docs - tokenized documents
-        start, end = self.span
-        return ' '.join(doc_tokens[start:end + 1])
+        # doc_tokens = docs[self.doc_id]  # global variable docs - tokenized documents
+        # start, end = self.span
+        #return ' '.join(doc_tokens[start:end + 1])
+        return self.literal
 
     def __str__(self):
         re = str(self.span)
@@ -439,7 +446,7 @@ class Result:
                               " r_num:" + str(self.values[key]["r_num"]) + " r_den:" + str(
                 self.values[key]["r_den"]) + "\n"
         for key in errors:
-            re += key + ": " + str(self.error[key]) + "\n"
+            re += key + ": " + str(len(self.error[key])) + "\n"
         return re
 
     @staticmethod
@@ -492,10 +499,23 @@ class TemplateTransformation:
         self.gold = template2
         self.template_transformations = []
         self.role_transformations = {}
+
+        self.transformed_template = None
+
         if self.predicted is None:
             self.template_transformations += ["Introduce_Template"]
+
+            roles = {}
+            for role in self.gold.roles:
+                mentions = []
+                for entity in self.gold.roles[role].mentions:
+                    mentions.append(entity.mentions[0])
+                roles[role] = Role(self.gold.doc_id, mentions, False)
+            self.transformed_template = Template(self.gold.doc_id, self.gold.incident_type, roles, False)
+            
         elif self.gold is None:
             self.template_transformations += ["Remove_Template"]
+            self.transformed_template = None
         else:
             errors = Template.compare(self.predicted, self.gold).error
             for error in list(errors):
@@ -503,6 +523,17 @@ class TemplateTransformation:
                     errors[self.translation[error]] = errors[error]
                     errors.pop(error)
             self.role_transformations = invert_dict(errors)
+            
+            self.transformed_template = copy.deepcopy(self.predicted)
+            roles = {}
+            for role in self.transformed_template.roles:
+                if role in self.role_transformations:
+                    mentions = []
+                    for entity in self.gold.roles[role].mentions:
+                        mentions.append(entity.mentions[0])
+                    self.transformed_template.roles[role] = Role(self.gold.doc_id, mentions, False)
+                else:
+                    self.transformed_template.roles[role].gold = False
 
     def __str__(self):
         result = ""
@@ -512,7 +543,7 @@ class TemplateTransformation:
                 result += str(self.gold)
                 result += '\n'
             if "Remove_Template" == transformation:
-                result += "[Introduce template]: \n"
+                result += "[Remove template]: \n"
                 result += str(self.predicted)
                 result += '\n'
         for role in self.role_transformations.keys():
@@ -527,19 +558,30 @@ def analyze(predicted, gold):
     print(predicted)
     print("\nTo Gold:")
     print(str(gold) + "\n")
-    print(Summary.compare(predicted, gold, True))
-
+    res = Summary.compare(predicted, gold, True)
+    return res
 
 def transform(predicted_summary, gold_summary):
     print("----------\nDoc ID: " + str(predicted_summary.doc_id) + " Transformations:")
     best_matching, best_result = Summary.best_match_rslt(predicted_summary, gold_summary)
+
+    transformed_templates = []
     for i, j in best_matching["pairs"]:
-        print(TemplateTransformation(predicted_summary.templates[i],
-                                     gold_summary.templates[j]))
+        transformation = TemplateTransformation(predicted_summary.templates[i],
+                                     gold_summary.templates[j])
+        print(transformation)
+        transformed_templates.append(transformation.transformed_template)
     for i in best_matching["unmatched_predicted"]:
-        print(TemplateTransformation(predicted_summary.templates[i], None))
+        transformation = TemplateTransformation(predicted_summary.templates[i], None)
+        print(transformation)
+        #transformed_templates.append(transformation.transformed_template)
     for j in best_matching["unmatched_gold"]:
-        print(TemplateTransformation(None, gold_summary.templates[j]))
+        transformation = TemplateTransformation(None, gold_summary.templates[j])
+        print(transformation)
+        transformed_templates.append(transformation.transformed_template)
+
+    transformed_pred_summary = Summary(predicted_summary.doc_id, transformed_templates, False)
+    transformed_data.append((transformed_pred_summary, gold_summary))
     print()
 
 
@@ -548,10 +590,26 @@ def transform(predicted_summary, gold_summary):
 # region Tests
 
 
-data, docs = from_file(
-    "/Users/barry/Library/Mobile Documents/com~apple~CloudDocs/Cornell/Research/Cornell Summer 2021/Code/Err-Analysis/Manual Result/gtt_muc_1_preds.out")
-for pair in data[:50]:
-    analyze(*pair)
+data, docs = from_file("gtt_muc_1_preds.out")
+
+transformed_data = []
+
+total_result_before = Result()
+
+for pair in data[:3]:
+    res = analyze(*pair)
+    total_result_before = Result.combine(total_result_before, res)
     transform(*pair)
+
+total_result_before.update()
+print("\n-----------\nTotal Result Before Transformation : \n-----------\n" + str(total_result_before) + "\n")
+
+total_result_after = Result()
+for pair in transformed_data:
+    res = analyze(*pair)
+    total_result_after = Result.combine(total_result_after, res)
+
+total_result_after.update()
+print("\n-----------\nTotal Result After Transformation : \n-----------\n" + str(total_result_after) + "\n")
 
 # endregion
