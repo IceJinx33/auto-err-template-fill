@@ -2,8 +2,15 @@ import json
 import re
 import string
 import copy
+import argparse
+import textwrap
 
-# region helpers
+
+roles = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+errors = ["Span_Error", "Spurious_Role_Filler", "Missing_Role_Filler",
+          "Spurious_Template", "Missing_Template"]
+
+
 def all_matchings(a, b):
     matchings = [{"pairs": [], "unmatched_gold": list(range(b)), "unmatched_predicted": list(range(a))}]
     for i in range(a):  # number of input indices paired
@@ -42,11 +49,13 @@ def normalize_string_old(s, for_doc=False):
     return white_space_fix(remove_articles(remove_punc(
         remove_hyphens(lower(s)))))  # if not for_doc else white_space_fix(remove_punc(remove_hyphens(lower(s))))
 
+
 def normalize_string(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
     regex = re.compile(r'\b(a|an|the)\b', re.UNICODE)
     s = re.sub(regex, ' ', s.lower())
     return ' '.join([c for c in s if c.isalnum()])
+
 
 def mention_tokens_index(doc, mention):
     """
@@ -155,16 +164,6 @@ def invert_dict(d):
     return inverse
 
 
-# endregion
-
-# region Class
-roles = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
-# roles = ["perp_ind", "perp_org"]
-errors = ["Span_Error", "Spurious_Role_Filler", "Divided_Entity", "Missing_Role_Filler", "Merged_Entity",
-          "Spurious_Template", "Divided_Event", "Missing_Template", "Merged_Event"]
-scoring_mode = "All_Templates"  # From ["All_Templates", "Matched/Spurious", "Matched/Missing", "Matched_Only"]
-
-
 # A single mention
 class Mention:
     def __init__(self, doc_id, span, literal):
@@ -239,6 +238,28 @@ class Mentions:
 
     def __str__(self):
         return "[" + ", ".join([str(mention) for mention in self.mentions]) + "]"
+
+    @staticmethod
+    def str_from_doc(r):
+        result = ""
+        for mention_or_mentions in r.mentions:
+            if isinstance(mention_or_mentions, Mention):
+                result+='('
+                mention = mention_or_mentions
+                result += mention.from_doc()
+                if mention != r.mentions[-1]:
+                    result += "), "
+                else:
+                    result += ")"
+            else:
+                result += "("
+                for mention in mention_or_mentions.mentions:
+                    result += mention.from_doc()
+                    if mention != mention_or_mentions.mentions[-1]:
+                        result += ", "
+                result += ")"
+        return result
+
 
 
 # The data associated with a field in a template
@@ -437,7 +458,7 @@ class Result:
             self.error[key] = []
 
     def __str__(self, verbose=True):
-        re = "Result:\n"
+        re = "Result:\n\n"
         for key in ["total"] + roles:
             re += key + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}\n".format(self.values[key]["f1"],
                                                                                      self.values[key]["p"],
@@ -445,6 +466,7 @@ class Result:
             if verbose: re += " p_num:" + str(self.values[key]["p_num"]) + " p_den:" + str(self.values[key]["p_den"]) + \
                               " r_num:" + str(self.values[key]["r_num"]) + " r_den:" + str(
                 self.values[key]["r_den"]) + "\n"
+        re += "\n"
         for key in errors:
             re += key + ": " + str(len(self.error[key])) + "\n"
         return re
@@ -481,16 +503,13 @@ class Result:
 
 
 class TemplateTransformation:
+
     translation = {
         "Span_Error": "Alter_Span",
         "Spurious_Role_Filler": "Remove_Role_Filler",
-        "Divided_Entity": None,
         "Missing_Role_Filler": "Introduce_Role_Filler",
-        "Merged_Entity": None,
         "Spurious_Template": "Remove_Template",
-        "Divided_Event": None,
         "Missing_Template": "Introduce_Template",
-        "Merged_Event": None
     }
 
     def __init__(self, template1, template2):
@@ -547,18 +566,18 @@ class TemplateTransformation:
                 result += str(self.predicted)
                 result += '\n'
         for role in self.role_transformations.keys():
-            result += role + ' ' + str(self.predicted.roles[role]) + "===" + str(
+            result += role + ': ' + Mentions.str_from_doc(self.predicted.roles[role]) + "===" + str(
                 self.role_transformations[role]) + "===>" + \
-                      str(self.gold.roles[role]) + '\n'
+                      Mentions.str_from_doc(self.gold.roles[role]) + '\n'
         return result
 
 
-def analyze(predicted, gold):
+def analyze(predicted, gold, verbose):
     print("Comparing Prediction:")
     print(predicted)
     print("\nTo Gold:")
     print(str(gold) + "\n")
-    res = Summary.compare(predicted, gold, True)
+    res = Summary.compare(predicted, gold, verbose)
     return res
 
 def transform(predicted_summary, gold_summary):
@@ -571,10 +590,11 @@ def transform(predicted_summary, gold_summary):
                                      gold_summary.templates[j])
         print(transformation)
         transformed_templates.append(transformation.transformed_template)
+
     for i in best_matching["unmatched_predicted"]:
         transformation = TemplateTransformation(predicted_summary.templates[i], None)
         print(transformation)
-        #transformed_templates.append(transformation.transformed_template)
+
     for j in best_matching["unmatched_gold"]:
         transformation = TemplateTransformation(None, gold_summary.templates[j])
         print(transformation)
@@ -582,34 +602,79 @@ def transform(predicted_summary, gold_summary):
 
     transformed_pred_summary = Summary(predicted_summary.doc_id, transformed_templates, False)
     transformed_data.append((transformed_pred_summary, gold_summary))
-    print()
 
 
-# endregion
+def add_script_args(parser):
+    parser.add_argument("-f", "--input_file", type=str,
+                    help="The path to the input file given to the system")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                    help="Increase output verbosity")
+    parser.add_argument("-s", "--scoring_mode", type=str, choices=["all", "msp", "mmi", "mat"],
+                    help= textwrap.dedent('''\
+                        Choose scoring mode according to MUC:
+                        all - All Templates
+                        msp - Matched/Spurious
+                        mmi - Matched/Missing
+                        mat - Matched Only
+                    '''), 
+                    default="All_Templates")
+    return parser
 
-# region Tests
+if __name__ == "__main__":
+    parser = add_script_args(argparse.ArgumentParser(usage=
+    'Use "python MUC_Error_Analysis_Operation.py --help" for more information',
+        formatter_class=argparse.RawTextHelpFormatter))
+    args = parser.parse_args()
 
+    input_file = args.input_file
+    verbose = args.verbose
 
-data, docs = from_file("gtt_muc_1_preds.out")
+    if args.scoring_mode == "all":
+        print("\nUsing scoring mode - All Templates\n")
+        scoring_mode = "All_Templates"
+    elif args.scoring_mode == "msp": 
+        print("\nUsing scoring mode - Matched/Spurious\n")
+        scoring_mode = "Matched/Spurious"
+    elif args.scoring_mode == "mmi":
+        print("\nUsing scoring mode - Matched/Missing\n")
+        scoring_mode = "Matched/Missing"
+    elif args.scoring_mode == "mat":
+        print("\nUsing scoring mode - Matched Only\n")
+        scoring_mode = "Matched_Only"
+    else:
+        print("\nUsing default scoring mode - All Templates\n")
+        scoring_mode = "All_Templates"
 
-transformed_data = []
+    data, docs = from_file(input_file)
 
-total_result_before = Result()
+    transformed_data = []
 
-for pair in data[:3]:
-    res = analyze(*pair)
-    total_result_before = Result.combine(total_result_before, res)
-    transform(*pair)
+    print("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...\n")
 
-total_result_before.update()
-print("\n-----------\nTotal Result Before Transformation : \n-----------\n" + str(total_result_before) + "\n")
+    total_result_before = Result()
 
-total_result_after = Result()
-for pair in transformed_data:
-    res = analyze(*pair)
-    total_result_after = Result.combine(total_result_after, res)
+    for pair in data:
+        print("\n-----------------------------------\n")
+        res = analyze(*pair, verbose)
+        total_result_before = Result.combine(total_result_before, res)
+        print("\n")
+        transform(*pair)
+        print("\n-----------------------------------\n")
 
-total_result_after.update()
-print("\n-----------\nTotal Result After Transformation : \n-----------\n" + str(total_result_after) + "\n")
+    print("ANALYZING TRANSFORMED DATA ...\n")
 
-# endregion
+    total_result_after = Result()
+
+    for pair in transformed_data:
+        print("\n-----------------------------------\n")
+        res = analyze(*pair, verbose)
+        total_result_after = Result.combine(total_result_after, res)
+        print("\n-----------------------------------\n")
+
+    total_result_before.update()
+    print("\n************************************\nTotal Result Before Transformation : \n************************************\n\n" + 
+    str(total_result_before) + "\n")
+
+    total_result_after.update()
+    print("\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" + 
+    str(total_result_after) + "\n")
