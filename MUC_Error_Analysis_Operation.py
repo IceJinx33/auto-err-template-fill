@@ -5,12 +5,14 @@ import copy
 import argparse
 import textwrap
 from tqdm import tqdm
+import numpy as np
+import spacy
 
+nlp = spacy.load("en_core_web_sm")
 
 roles = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
 errors = ["Span_Error", "Spurious_Role_Filler", "Missing_Role_Filler",
           "Spurious_Template", "Missing_Template"]
-
 
 def all_matchings(a, b):
     matchings = [{"pairs": [], "unmatched_gold": list(range(b)), "unmatched_predicted": list(range(a))}]
@@ -47,8 +49,7 @@ def normalize_string_old(s, for_doc=False):
     def lower(text):
         return text.lower()
 
-    return white_space_fix(remove_articles(remove_punc(
-        remove_hyphens(lower(s)))))  # if not for_doc else white_space_fix(remove_punc(remove_hyphens(lower(s))))
+    return white_space_fix(remove_articles(remove_punc(remove_hyphens(lower(s)))))  
 
 
 def normalize_string(s):
@@ -164,6 +165,37 @@ def invert_dict(d):
                 inverse[item].append(key)
     return inverse
 
+def extract_span_diff(string1, diff, start):
+    """
+    This functions returns a string containing [diff] number of consecutive 
+    alphanumeric characters from [string1] as well as any non-alphanumeric 
+    characters it encounters while searching for alphanumeric characters. If 
+    [start] = True, extraction starts from the beginning of the string, otherwise,
+    extraction begins at the end of the string.
+    :params string1: the input string
+    :type string1: string
+    :params diff: the number of alphanumeric characters to extract
+    :type diff: [diff] is an int > 0
+    :params start: whether extraction starts at the beginning ([start] = True)
+    or end of [string1] ([start] = False)
+    :type beg: [start] is an bool
+    """
+    if start == False:
+        string1 = string1[::-1]
+    d = 0
+    s = ""
+    for c in string1:
+        s += c
+        if c.isalnum():
+            d += 1
+        else:
+            continue
+        if d == diff:
+            break
+    if start == False:
+        return s[::-1]
+    else:
+        return s
 
 # A single mention
 class Mention:
@@ -195,6 +227,8 @@ class Mention:
         result.values["total"]["p_den"] += 1
         correct = False
         span_error = False
+        min_span_diff = np.infty
+        best_gold_mention = None
         for gold_mention in gold_mentions.mentions:
             lower = max(predicted_mention.span[0], gold_mention.span[0])
             upper = min(predicted_mention.span[1], gold_mention.span[1])
@@ -203,6 +237,11 @@ class Mention:
                     correct = True
                 else:
                     span_error = True
+                    diff = (abs(predicted_mention.span[0] - gold_mention.span[0]) + 
+                    abs(predicted_mention.span[1] - gold_mention.span[1]))
+                    if diff < min_span_diff:
+                        min_span_diff = diff
+                        best_gold_mention = gold_mention
 
         if correct:
             result.values[role]["r_num"] += 1
@@ -211,6 +250,30 @@ class Mention:
             result.values["total"]["p_num"] += 1
         elif span_error:
             result.error["Span_Error"].append(role)
+            
+            # extracting missing/extra parts of the spans that cause span errors
+            # m - missing, e - extra
+            if best_gold_mention != None:
+                diff_1 = predicted_mention.span[0] - best_gold_mention.span[0]
+                diff_2 = predicted_mention.span[1] - best_gold_mention.span[1]
+                docid_str = "Doc ID: " + predicted_mention.doc_id
+                if diff_1 > 0:
+                    chars = extract_span_diff(best_gold_mention.literal, diff_1, True)
+                    result.spans.append((docid_str, chars, "m"))
+                elif diff_1 < 0:
+                    chars = extract_span_diff(predicted_mention.literal, -diff_1, True)
+                    result.spans.append((docid_str, chars, "e"))
+                else:
+                    pass
+                if diff_2 > 0:
+                    chars = extract_span_diff(predicted_mention.literal, diff_2, False)
+                    result.spans.append((docid_str, chars, "e"))
+                elif diff_2 < 0:
+                    chars = extract_span_diff(best_gold_mention.literal, -diff_2, False)
+                    result.spans.append((docid_str, chars, "m"))
+                else:
+                    pass
+
         else:
             result.error["Missing_Role_Filler"].append(role)
             result.error["Spurious_Role_Filler"].append(role)
@@ -280,17 +343,14 @@ class Role:
         result = Result()
         for i, j in matching["pairs"]:
             if verbose: 
-                #print(" - " + str(predicted_role.mentions[i]) + " -- matched with -- " + str(gold_role.mentions[j]))
                 output_file.write(" - " + str(predicted_role.mentions[i]) + " -- matched with -- " + str(gold_role.mentions[j]) + "\n")
             result = Result.combine(result, Mention.compare(predicted_role.mentions[i], gold_role.mentions[j], role))
         for i in matching["unmatched_predicted"]:
             if verbose: 
-                #print(" - Spurious Role Filler:" + str(predicted_role.mentions[i]))
                 output_file.write(" - Spurious Role Filler:" + str(predicted_role.mentions[i]) + "\n")
             result = Result.combine(result, Mention.compare(predicted_role.mentions[i], None, role))
         for i in matching["unmatched_gold"]:
             if verbose: 
-                #print(" - Missing Role Filler:" + str(gold_role.mentions[i]))
                 output_file.write(" - Missing Role Filler:" + str(gold_role.mentions[i]) + "\n")
             result = Result.combine(result, Mention.compare(None, gold_role.mentions[i], role))
         return result
@@ -432,27 +492,17 @@ class Summary:
         result = Result()
         for i, j in matching["pairs"]:
             if verbose:
-                #print(predicted_summary.templates[i])
-                #print("  -- matched with --  ")
-                #print(gold_summary.templates[j])
-                #print("\n")
                 s = "\n" + str(predicted_summary.templates[i]) + "\n" + "  -- matched with --  " + "\n" + str(gold_summary.templates[j]) + "\n\n"
                 output_file.write(s)
             result = Result.combine(result, Template.compare(predicted_summary.templates[i], gold_summary.templates[j],
                                                              verbose))
         for i in matching["unmatched_predicted"]:
             if verbose:
-                #print("\nSpurious Template:")
-                #print(predicted_summary.templates[i])
-                #print("\n")
                 s = "\nSpurious Template:" + "\n" + str(predicted_summary.templates[i]) + "\n\n"
                 output_file.write(s)
             result = Result.combine(result, Template.compare(predicted_summary.templates[i], None))
         for i in matching["unmatched_gold"]:
             if verbose:
-                #print("\nMissing Template:")
-                #print(gold_summary.templates[i])
-                #print("\n")
                 s = "\nMissing Template:" + "\n" + str(gold_summary.templates[i]) + "\n\n"
                 output_file.write(s)
             result = Result.combine(result, Template.compare(None, gold_summary.templates[i]))
@@ -467,6 +517,7 @@ class Result:
         self.error = {}
         for key in errors:
             self.error[key] = []
+        self.spans = []
 
     def __str__(self, verbose=True):
         re = "Result:\n\n"
@@ -491,6 +542,7 @@ class Result:
                 result.values[key][stat] = result1.values[key][stat] + result2.values[key][stat]
         for key in result.error.keys():
             result.error[key] = result1.error[key] + result2.error[key]
+        result.spans = result1.spans + result2.spans
         return result
 
     @staticmethod
@@ -584,37 +636,29 @@ class TemplateTransformation:
 
 
 def analyze(predicted_summary, gold_summary, verbose):
-    #print("Comparing Prediction:")
     output_file.write("Comparing Prediction:\n")
-    #print(str(predicted_summary))
     output_file.write(str(predicted_summary) + "\n")
-    #print("\nTo Gold:")
     output_file.write("\nTo Gold:\n")
-    #print(str(gold_summary) + "\n")
     output_file.write(str(gold_summary) + "\n\n")
     best_matching, best_res = Summary.compare(predicted_summary, gold_summary, verbose)
     return best_matching, best_res
 
 def transform(predicted_summary, gold_summary, best_matching):
-    #print("----------\nDoc ID: " + str(predicted_summary.doc_id) + " Transformations:")
     output_file.write("----------\nDoc ID: " + str(predicted_summary.doc_id) + " Transformations:\n")
 
     transformed_templates = []
     for i, j in best_matching["pairs"]:
         transformation = TemplateTransformation(predicted_summary.templates[i],
                                      gold_summary.templates[j])
-        #print(transformation)
         output_file.write(str(transformation) + "\n")
         transformed_templates.append(transformation.transformed_template)
 
     for i in best_matching["unmatched_predicted"]:
         transformation = TemplateTransformation(predicted_summary.templates[i], None)
-        #print(transformation)
         output_file.write(str(transformation) + "\n")
 
     for j in best_matching["unmatched_gold"]:
         transformation = TemplateTransformation(None, gold_summary.templates[j])
-        #print(transformation)
         output_file.write(str(transformation) + "\n")
         transformed_templates.append(transformation.transformed_template)
 
@@ -627,6 +671,8 @@ def add_script_args(parser):
                     help="The path to the input file given to the system")
     parser.add_argument("-v", "--verbose", action="store_true",
                     help="Increase output verbosity")
+    parser.add_argument("-at", "--analyze_transformed", action="store_true",
+                    help="Analyze transformed data")
     parser.add_argument("-s", "--scoring_mode", type=str, choices=["all", "msp", "mmi", "mat"],
                     help= textwrap.dedent('''\
                         Choose scoring mode according to MUC:
@@ -648,27 +694,23 @@ if __name__ == "__main__":
 
     input_file = args.input_file
     verbose = args.verbose
+    analyze_transformed = args.analyze_transformed
 
-    output_file = open(args.output_file, "a")
+    output_file = open(args.output_file, "w")
 
     if args.scoring_mode == "all":
-        #print("\nUsing scoring mode - All Templates\n")
         output_file.write("\nUsing scoring mode - All Templates\n")
         scoring_mode = "All_Templates"
     elif args.scoring_mode == "msp": 
-        #print("\nUsing scoring mode - Matched/Spurious\n")
         output_file.write("\nUsing scoring mode - Matched/Spurious\n")
         scoring_mode = "Matched/Spurious"
     elif args.scoring_mode == "mmi":
-        #print("\nUsing scoring mode - Matched/Missing\n")
         output_file.write("\nUsing scoring mode - Matched/Missing\n")
         scoring_mode = "Matched/Missing"
     elif args.scoring_mode == "mat":
-        #print("\nUsing scoring mode - Matched Only\n")
         output_file.write("\nUsing scoring mode - Matched Only\n")
         scoring_mode = "Matched_Only"
     else:
-        #print("\nUsing default scoring mode - All Templates\n")
         output_file.write("\nUsing default scoring mode - All Templates\n")
         scoring_mode = "All_Templates"
 
@@ -676,45 +718,63 @@ if __name__ == "__main__":
 
     transformed_data = []
 
-    #print("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...\n")
     output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...\n")
 
     total_result_before = Result()
 
     for pair in tqdm(data, desc="Analyzing Data and Applying Transformations: "):
-        #print("\n-----------------------------------\n")
         output_file.write("\n-----------------------------------\n")
         best_matching, best_res = analyze(*pair, verbose)
         total_result_before = Result.combine(total_result_before, best_res)
-        #print("\n")
         output_file.write("\n")
         transform(*pair, best_matching)
-        #print("\n-----------------------------------\n")
         output_file.write("\n-----------------------------------\n")
 
-    #print("ANALYZING TRANSFORMED DATA ...\n")
-    output_file.write("ANALYZING TRANSFORMED DATA ...\n")
+    if analyze_transformed:
+        output_file.write("ANALYZING TRANSFORMED DATA ...\n")
 
-    total_result_after = Result()
+        total_result_after = Result()
 
-    for pair in tqdm(transformed_data, desc="Analyzing Transformed Data: "):
-        #print("\n-----------------------------------\n")
-        output_file.write("\n-----------------------------------\n")
-        _, best_res = analyze(*pair, verbose)
-        total_result_after = Result.combine(total_result_after, best_res)
-        #print("\n-----------------------------------\n")
-        output_file.write("\n-----------------------------------\n")
-
+        for pair in tqdm(transformed_data, desc="Analyzing Transformed Data: "):
+            output_file.write("\n-----------------------------------\n")
+            _, best_res = analyze(*pair, verbose)
+            total_result_after = Result.combine(total_result_after, best_res)
+            output_file.write("\n-----------------------------------\n")
+    
     total_result_before.update()
-    #print("\n************************************\nTotal Result Before Transformation : \n************************************\n\n" + 
-    #str(total_result_before) + "\n")
     output_file.write("\n************************************\nTotal Result Before Transformation : \n************************************\n\n" + 
     str(total_result_before) + "\n")
-
-    total_result_after.update()
-    #print("\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" + 
-    #str(total_result_after) + "\n")
-    output_file.write("\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" + 
-    str(total_result_after) + "\n")
-
+    
+    if analyze_transformed:
+        total_result_after.update()
+        output_file.write("\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" + 
+        str(total_result_after) + "\n")
+    
     output_file.close()
+
+    # Giving POS tags to Missing/Extra Span tokens
+    missing_span = {}
+    extra_span = {}
+    for _, span, me in total_result_before.spans:
+        st = nlp(span)
+        for token in st:
+            pos = token.pos_
+            print((token, pos))
+            if me == "m":
+                try:
+                    missing_span[pos] += 1
+                except:
+                    missing_span[pos] = 1
+            else:
+                try:
+                    extra_span[pos] += 1
+                except:
+                    extra_span[pos] = 1
+    
+    ex = nlp("Shining Path")
+    for token in ex:
+        pos = token.pos_
+        print((token, pos))
+
+    print("Missing span tokens - POS counts \n" + str(missing_span) + "\n")
+    print("Extra span tokens - POS counts \n" + str(extra_span))
