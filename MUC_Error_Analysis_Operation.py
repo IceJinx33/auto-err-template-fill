@@ -450,8 +450,8 @@ class Template:
             for other_role in roles:
                 confusion_score = Role.compare(predicted_template.roles[role], gold_template.roles[other_role], role, False).score()
                 confusion_row.append(confusion_score)
-                if other_role != role and confusion_score >= comparison.score():
-                    result.error["Incorrect_Role"] += 1
+                if confusion_score > comparison.score():
+                    result.error["Incorrect_Role"].append(role)
             confusion_matrix.append(confusion_row)
         result.confusion_matrices.append(confusion_matrix)
         return result
@@ -580,6 +580,7 @@ class TemplateTransformation:
         "Missing_Role_Filler": "Introduce_Role_Filler",
         "Spurious_Template": "Remove_Template",
         "Missing_Template": "Introduce_Template",
+        "Incorrect_Role": "Change_Role",
     }
 
     def __init__(self, template1, template2):
