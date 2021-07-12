@@ -12,7 +12,7 @@ nlp = spacy.load("en_core_web_sm")
 
 roles = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
 errors = ["Span_Error", "Spurious_Role_Filler", "Missing_Role_Filler",
-          "Spurious_Template", "Missing_Template"]
+          "Spurious_Template", "Missing_Template", "Incorrect_Role"]
 
 def all_matchings(a, b):
     matchings = [{"pairs": [], "unmatched_gold": list(range(b)), "unmatched_predicted": list(range(a))}]
@@ -441,13 +441,19 @@ class Template:
         result.values["total"]["p_den"] += 1
         result.values["total"]["r_num"] += 1
         result.values["total"]["r_den"] += 1
+        confusion_matrix = []
         for role in roles:
-            if verbose: 
-                #print("Comparing " + role + ":")
-                output_file.write("Comparing " + role + ":\n")
-            result = Result.combine(result,
-                                    Role.compare(predicted_template.roles[role], gold_template.roles[role], role,
-                                                 verbose))
+            if verbose: output_file.write("Comparing " + role + ":\n")
+            comparison = Role.compare(predicted_template.roles[role], gold_template.roles[role], role, verbose)
+            result = Result.combine(result, comparison)
+            confusion_row = []
+            for other_role in roles:
+                confusion_score = Role.compare(predicted_template.roles[role], gold_template.roles[other_role], role, False).score()
+                confusion_row.append(confusion_score)
+                if other_role != role and confusion_score >= comparison.score():
+                    result.error["Incorrect_Role"] += 1
+            confusion_matrix.append(confusion_row)
+        result.confusion_matrices.append(confusion_matrix)
         return result
 
 
@@ -516,6 +522,7 @@ class Result:
         self.error = {}
         for key in errors:
             self.error[key] = []
+        self.confusion_matrices = []
         self.spans = []
 
     def __str__(self, verbose=True):
@@ -541,6 +548,7 @@ class Result:
                 result.values[key][stat] = result1.values[key][stat] + result2.values[key][stat]
         for key in result.error.keys():
             result.error[key] = result1.error[key] + result2.error[key]
+        result.confusion_matrices = result1.confusion_matrices + result2.confusion_matrices
         result.spans = result1.spans + result2.spans
         return result
 
