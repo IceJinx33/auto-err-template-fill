@@ -10,11 +10,19 @@ import spacy
 
 nlp = spacy.load("en_core_web_sm")
 
+# List of names of roles (keys for rows in each template)
 roles = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+# List of names of error types
 errors = ["Span_Error", "Spurious_Role_Filler", "Missing_Role_Filler",
           "Spurious_Template", "Missing_Template", "Incorrect_Role"]
 
 def all_matchings(a, b):
+    """returns a list of all matchings, where each matching is a dictionary with keys "pairs," "unmatched_gold," "unmatched_predicted." 
+    A matching is a set of pairs (i,j) where i in range(a), j is in range(b), unmatched_predicted is a subset of range(a), 
+    unmatched_gold is a subset of range(b), every element of range(a) occurs exactly once in unmatched_predicted 
+    or in the first position of a pair, and every element of range(b) occurs exactly once in unmatched_goldd 
+    or in the second position of a pair."""
+    
     matchings = [{"pairs": [], "unmatched_gold": list(range(b)), "unmatched_predicted": list(range(a))}]
     for i in range(a):  # number of input indices paired
         new_matchings = []
