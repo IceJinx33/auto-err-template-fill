@@ -104,14 +104,14 @@ class Mention:
         result = predicted_mention.result_type()
 
         if gold_mentions is None:
-            result.update("Spurious_Role_Filler", {"predicted_mention": predicted_mention})
+            result.update("Spurious_Role_Filler", {"predicted_mention": predicted_mention, "role_name": role_name})
             return result
 
         if predicted_mention is None:
-            result.update("Missing_Role_Filler", {"gold_mentions": gold_mentions})
+            result.update("Missing_Role_Filler", {"gold_mentions": gold_mentions, "role_name": role_name})
             return result
 
-        result.update("Matched_Role_Filler", {"predicted_mention": predicted_mention, "gold_mentions": gold_mentions})
+        result.update("Matched_Role_Filler", {"predicted_mention": predicted_mention, "gold_mentions": gold_mentions, "role_name": role_name})
         
         return result
 
@@ -308,10 +308,7 @@ class Result:
     def __str__(self): 
         pass
 
-    def __eq__(self):
-        pass
-
-    def __lt__(self):
+    def __gt__(self):
         pass
 
     @staticmethod
