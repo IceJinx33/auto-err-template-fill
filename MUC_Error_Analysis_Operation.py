@@ -107,8 +107,6 @@ def transform(predicted_summary, gold_summary, best_matching):
     transformed_pred_summary = Summary(predicted_summary.doc_id, transformed_templates, False)
     transformed_data.append((transformed_pred_summary, gold_summary))
 
-
-
 class MUC_Result(Error_Analysis.Result):
 
     # List of names of error types
@@ -117,6 +115,8 @@ class MUC_Result(Error_Analysis.Result):
     
 
     def __init__(self):
+        self.valid = True
+
         self.stats = {}
         for role_name in role_names + ["total"]:
             self.stats[role_name] = {"p_num": 0, "p_den": 0, "r_num": 0, "r_den": 0, "p": 0, "r": 0, "f1": 0}
@@ -130,10 +130,13 @@ class MUC_Result(Error_Analysis.Result):
         self.spans = []
         self.span_error = 0
         self.log = ""
+    
+    def log(self,s):
+        self.log += s+"\n"
 
     def __str__(self, verbose=True):
         output_string = "Result:\n\n"
-        output_string += self.log+"\n\n"
+        if verbose: output_string += self.log+"\n\n"
         for role_name in ["total"] + role_names:
             output_string += role_name + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}\n".format(self.log[role_name]["f1"],
                                                                                      self.values[role_name]["p"],
@@ -149,17 +152,13 @@ class MUC_Result(Error_Analysis.Result):
     def __gt__(self, other):
         self.update_stats()
         other.update_stats()
-        return (self.stats["total"]["f1"] > other.stats["total"]["f1"]) or \
+        return not other.valid or (self.stats["total"]["f1"] > other.stats["total"]["f1"]) or \
         (self.stats["total"]["f1"] == other.stats["total"]["f1"] and self.span_error < other.span_error)
-
-
-    def log(self,s):
-        self.log+=s+"\n"
-
 
     @staticmethod
     def combine(result1, result2):
         result = MUC_Result()
+        result.valid = result1.valid and result2.valid
         for key in result.stats.keys():
             for stat in ["p_num", "p_den", "r_num", "r_den"]:
                 result.stats[key][stat] = result1.stats[key][stat] + result2.stats[key][stat]
@@ -197,6 +196,18 @@ class MUC_Result(Error_Analysis.Result):
             return 1 - ((length1 * length2 / (intersection ** 2)) if intersection > 0 else 0)
 
     def update(self, comparison_event, args = {}):
+
+        if "Template" in comparison_event:
+            self.log("--------------")
+
+        if not self.valid: 
+            self.log("Invalid matching.")
+            return
+
+        self.log(comparison_event)
+        for k,v in args.items():
+            self.log(k)
+            self.log(str(v))
 
         if comparison_event == "Spurious_Role_Filler": 
             self.stats[args["role_name"]]["p_den"] += 1
@@ -236,19 +247,14 @@ class MUC_Result(Error_Analysis.Result):
                 self.spans += Error_Analysis.extract_span(predicted_mention, best_gold_mention)
                 
         elif comparison_event == "Spurious_Template": 
-            self.log(comparison_event+"-------")
-            self.log(args)
             self.errors["Spurious_Template"].append(args["predicted_template"])
 
         elif comparison_event == "Missing_Template": 
             self.errors["Missing_Template"].append(args["gold_template"])
-            self.log(comparison_event+"-------")
-            self.log(args)
 
         elif comparison_event == "Matched_Template":
-            self.log(comparison_event+"-------")
-            self.log(args)
-            pass
+            if args["predicted_template"].roles["incident_type"] != args["gold_template"].roles["incident_type"]:
+                self.valid = False
 
         elif comparison_event == "Incorrect_Role":
             pass

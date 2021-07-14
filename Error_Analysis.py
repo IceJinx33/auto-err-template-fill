@@ -261,20 +261,22 @@ class Template:
 
     @staticmethod
     def compare(predicted_template, gold_template, verbose=False):
-        assert predicted_template.result_type == gold_template.result_type, "only templates with the same result type can be compared"
-        assert predicted_template.roles.keys() == gold_template.roles.keys(), "only templates with the same roles can be compared"
-        
+        assert predicted_template is not None or gold_template is not None, "cannot compare None to None"
+
         if gold_template is None:
             result = predicted_template.result_type()
             result.update("Spurious_Template", {"predicted_template": predicted_template})
             return result
 
         if predicted_template is None:
-            result = Result()
+            result = gold_template.result_type()
             result.update("Missing_Template",  {"gold_template": gold_template})
             return result
 
-        result = Result()
+        assert predicted_template.result_type == gold_template.result_type, "only templates with the same result type can be compared"
+        assert predicted_template.roles.keys() == gold_template.roles.keys(), "only templates with the same roles can be compared"
+
+        result = predicted_template.result_type()
         result.update("Matched_Template", {"predicted_template": predicted_template, "gold_template": gold_template})
         for role_name in predicted_template.roles:
             comparison = Role.compare(predicted_template.roles[role_name], gold_template.roles[role_name], role_name, verbose)
