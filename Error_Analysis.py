@@ -337,7 +337,7 @@ class Result:
     def __str__(self): 
         pass
 
-    def __gt__(self):
+    def __gt__(self,other):
         pass
 
     @staticmethod

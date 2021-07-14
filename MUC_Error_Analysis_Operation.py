@@ -1,22 +1,21 @@
+import argparse
 import json
 import re
-import string
-import copy
-import argparse
 import textwrap
-from tqdm import tqdm
-import numpy as np
-import spacy
-import Error_Analysis
 
+import spacy
+from tqdm import tqdm
+
+import Error_Analysis
+from Error_Analysis import *
 
 nlp = spacy.load("en_core_web_sm")
 
 # List of names of roles (keys for rows in each template)
 role_names = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
 
+"""
 class TemplateTransformation:
-
     translation = {
         "Span_Error": "Alter_Span",
         "Spurious_Role_Filler": "Remove_Role_Filler",
@@ -45,7 +44,7 @@ class TemplateTransformation:
                     mentions.append(entity.mentions[0])
                 roles[role] = Role(self.gold.doc_id, mentions, False)
             self.transformed_template = Template(self.gold.doc_id, self.gold.incident_type, roles, False)
-            
+
         elif self.gold is None:
             self.template_transformations += ["Remove_Template"]
             self.transformed_template = None
@@ -56,7 +55,7 @@ class TemplateTransformation:
                     errors[self.translation[error]] = errors[error]
                     errors.pop(error)
             self.role_transformations = invert_dict(errors)
-            
+
             self.transformed_template = copy.deepcopy(self.predicted)
             roles = {}
             for role in self.transformed_template.roles:
@@ -80,10 +79,11 @@ class TemplateTransformation:
                 result += str(self.predicted)
                 result += '\n'
         for role in self.role_transformations.keys():
-            result += role + ': ' + Mentions.str_from_doc(self.predicted.roles[role]) + "===" + str(
+            result += role + ': ' + Error_Analysis.Mentions.str_from_doc(self.predicted.roles[role]) + "===" + str(
                 self.role_transformations[role]) + "===>" + \
                       Mentions.str_from_doc(self.gold.roles[role]) + '\n'
         return result
+
 
 def transform(predicted_summary, gold_summary, best_matching):
     output_file.write("----------\nDoc ID: " + str(predicted_summary.doc_id) + " Transformations:\n")
@@ -91,7 +91,7 @@ def transform(predicted_summary, gold_summary, best_matching):
     transformed_templates = []
     for i, j in best_matching["pairs"]:
         transformation = TemplateTransformation(predicted_summary.templates[i],
-                                     gold_summary.templates[j])
+                                                gold_summary.templates[j])
         output_file.write(str(transformation) + "\n")
         transformed_templates.append(transformation.transformed_template)
 
@@ -106,13 +106,13 @@ def transform(predicted_summary, gold_summary, best_matching):
 
     transformed_pred_summary = Summary(predicted_summary.doc_id, transformed_templates, False)
     transformed_data.append((transformed_pred_summary, gold_summary))
+"""
+
 
 class MUC_Result(Error_Analysis.Result):
-
     # List of names of error types
     error_names = ["Span_Error", "Spurious_Role_Filler", "Missing_Role_Filler",
-          "Spurious_Template", "Missing_Template", "Incorrect_Role"]
-    
+                   "Spurious_Template", "Missing_Template", "Incorrect_Role"]
 
     def __init__(self):
         self.valid = True
@@ -120,30 +120,32 @@ class MUC_Result(Error_Analysis.Result):
         self.stats = {}
         for role_name in role_names + ["total"]:
             self.stats[role_name] = {"p_num": 0, "p_den": 0, "r_num": 0, "r_den": 0, "p": 0, "r": 0, "f1": 0}
-        
+
         self.errors = {}
         for error_name in self.error_names:
             self.errors[error_name] = []
-        
+
         self.transformations = []
         self.role_confusion_matrices = []
         self.spans = []
         self.span_error = 0
         self.log = ""
-    
-    def log(self,s):
-        self.log += s+"\n"
+
+    def write_log(self, s):
+        self.log += s + "\n"
 
     def __str__(self, verbose=True):
         output_string = "Result:\n\n"
-        if verbose: output_string += self.log+"\n\n"
+        if verbose: output_string += self.log + "\n\n"
         for role_name in ["total"] + role_names:
-            output_string += role_name + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}\n".format(self.log[role_name]["f1"],
-                                                                                     self.values[role_name]["p"],
-                                                                                     self.values[role_name]["r"])
-            if verbose: output_string += " p_num:" + str(self.values[role_name]["p_num"]) + " p_den:" + str(self.values[role_name]["p_den"]) + \
-                              " r_num:" + str(self.values[role_name]["r_num"]) + " r_den:" + str(
-                self.values[role_name]["r_den"]) + "\n"
+            output_string += role_name + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}\n".format(
+                self.stats[role_name]["f1"],
+                self.stats[role_name]["p"],
+                self.stats[role_name]["r"])
+            if verbose: output_string += " p_num:" + str(self.stats[role_name]["p_num"]) + " p_den:" + str(
+                self.stats[role_name]["p_den"]) + \
+                                         " r_num:" + str(self.stats[role_name]["r_num"]) + " r_den:" + str(
+                self.stats[role_name]["r_den"]) + "\n"
         # output_string += "\n"
         # for error_name in self.error_names:
         #     output_string += error_name + ": " + str(len(self.error[error_name])) + "\n"
@@ -153,7 +155,7 @@ class MUC_Result(Error_Analysis.Result):
         self.update_stats()
         other.update_stats()
         return not other.valid or (self.stats["total"]["f1"] > other.stats["total"]["f1"]) or \
-        (self.stats["total"]["f1"] == other.stats["total"]["f1"] and self.span_error < other.span_error)
+               (self.stats["total"]["f1"] == other.stats["total"]["f1"] and self.span_error < other.span_error)
 
     @staticmethod
     def combine(result1, result2):
@@ -168,7 +170,7 @@ class MUC_Result(Error_Analysis.Result):
         result.role_confusion_matrices = result1.role_confusion_matrices + result2.role_confusion_matrices
         result.spans = result1.spans + result2.spans
         result.span_score = result1.span_score + result2.span_score
-        result.log = result1.log +"--------------------------\n"+ result2.log
+        result.log = result1.write_log + "--------------------------\n" + result2.write_log
         return result
 
     @staticmethod
@@ -181,13 +183,14 @@ class MUC_Result(Error_Analysis.Result):
 
     def update_stats(self):
         for _, role in self.stats.items():
-            role["p"], role["r"], role["f1"] = MUC_Result.compute_scores(role["p_num"], role["p_den"], role["r_num"], role["r_den"])
+            role["p"], role["r"], role["f1"] = MUC_Result.compute_scores(role["p_num"], role["p_den"], role["r_num"],
+                                                                         role["r_den"])
         return
 
     @staticmethod
-    def span_scorer(span1, span2, mode = "absolute"):
+    def span_scorer(span1, span2, mode="absolute"):
         # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
-        length1, length2 = abs(span1[1]-span1[0]), abs(span2[1]-span2[0])
+        length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
         if mode == "absolute":
             val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (length1 + length2)
             return val if val < 1 else 1
@@ -195,26 +198,28 @@ class MUC_Result(Error_Analysis.Result):
             intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
             return 1 - ((length1 * length2 / (intersection ** 2)) if intersection > 0 else 0)
 
-    def update(self, comparison_event, args = {}):
+    def update(self, comparison_event, args=None):
 
+        if args is None:
+            args = {}
         if "Template" in comparison_event:
-            self.log("--------------")
+            self.write_log("--------------")
 
-        if not self.valid: 
-            self.log("Invalid matching.")
+        if not self.valid:
+            self.write_log("Invalid matching.")
             return
 
-        self.log(comparison_event)
-        for k,v in args.items():
-            self.log(k)
-            self.log(str(v))
+        self.write_log(comparison_event)
+        for k, v in args.items():
+            self.write_log(k)
+            self.write_log(str(v))
 
-        if comparison_event == "Spurious_Role_Filler": 
+        if comparison_event == "Spurious_Role_Filler":
             self.stats[args["role_name"]]["p_den"] += 1
             self.stats["total"]["p_den"] += 1
             self.errors["Spurious_Role_Filler"].append(args["predicted_mention"])
 
-        elif comparison_event == "Missing_Role_Filler": 
+        elif comparison_event == "Missing_Role_Filler":
             self.stats[args["role_name"]]["r_den"] += 1
             self.stats["total"]["r_den"] += 1
             self.errors["Missing_Role_Filler"].append(args["gold_mentions"])
@@ -225,10 +230,10 @@ class MUC_Result(Error_Analysis.Result):
             predicted_mention = args["predicted_mention"]
             for gold_mention in args["gold_mentions"].mentions:
                 span_error = MUC_Result.span_scorer(predicted_mention.span, gold_mention.span)
-                if span_error < min_span_error: 
+                if span_error < min_span_error:
                     min_span_error = span_error
                     best_gold_mention = gold_mention
-                            
+
             self.stats[args["role_name"]]["r_den"] += 1
             self.stats[args["role_name"]]["p_den"] += 1
             self.stats["total"]["r_den"] += 1
@@ -245,11 +250,11 @@ class MUC_Result(Error_Analysis.Result):
                 self.span_error += min_span_error
                 self.errors["Span_Error"].append(args["role_name"])
                 self.spans += Error_Analysis.extract_span(predicted_mention, best_gold_mention)
-                
-        elif comparison_event == "Spurious_Template": 
+
+        elif comparison_event == "Spurious_Template":
             self.errors["Spurious_Template"].append(args["predicted_template"])
 
-        elif comparison_event == "Missing_Template": 
+        elif comparison_event == "Missing_Template":
             self.errors["Missing_Template"].append(args["gold_template"])
 
         elif comparison_event == "Matched_Template":
@@ -258,14 +263,17 @@ class MUC_Result(Error_Analysis.Result):
 
         elif comparison_event == "Incorrect_Role":
             pass
-        
-        else: raise Exception("Illegal comparison event: "+comparison_event)
+
+        else:
+            raise Exception("Illegal comparison event: " + comparison_event)
+
 
 def normalize_string(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
     regex = re.compile(r'\b(a|an|the)\b', re.UNICODE)
     s = re.sub(regex, ' ', s.lower())
     return ' '.join([c for c in s if c.isalnum()])
+
 
 def mention_tokens_index(doc, mention):
     """
@@ -291,25 +299,27 @@ def mention_tokens_index(doc, mention):
         return 1, 0
     return start, end
 
+
 def add_script_args(parser):
     parser.add_argument("-i", "--input_file", type=str,
-                    help="The path to the input file given to the system")
+                        help="The path to the input file given to the system")
     parser.add_argument("-v", "--verbose", action="store_true",
-                    help="Increase output verbosity")
+                        help="Increase output verbosity")
     parser.add_argument("-at", "--analyze_transformed", action="store_true",
-                    help="Analyze transformed data")
+                        help="Analyze transformed data")
     parser.add_argument("-s", "--scoring_mode", type=str, choices=["all", "msp", "mmi", "mat"],
-                    help= textwrap.dedent('''\
+                        help=textwrap.dedent('''\
                         Choose scoring mode according to MUC:
                         all - All Templates
                         msp - Matched/Spurious
                         mmi - Matched/Missing
                         mat - Matched Only
-                    '''), 
-                    default="All_Templates")
+                    '''),
+                        default="All_Templates")
     parser.add_argument("-o", "--output_file", type=str,
-                    help="The path to the output file the system writes to")
+                        help="The path to the output file the system writes to")
     return parser
+
 
 def from_file(input_file, result_type):
     """
@@ -377,6 +387,7 @@ def from_file(input_file, result_type):
 
     return data, documents
 
+
 def analyze(predicted_summary, gold_summary, verbose):
     output_file.write("Comparing Prediction:\n")
     output_file.write(str(predicted_summary) + "\n")
@@ -384,10 +395,11 @@ def analyze(predicted_summary, gold_summary, verbose):
     output_file.write(str(gold_summary) + "\n\n")
     return Error_Analysis.Summary.compare(predicted_summary, gold_summary, verbose)
 
+
 if __name__ == "__main__":
     parser = add_script_args(argparse.ArgumentParser(usage=
-    'Use "python MUC_Error_Analysis_Operation.py --help" for more information',
-        formatter_class=argparse.RawTextHelpFormatter))
+                                                     'Use "python MUC_Error_Analysis_Operation.py --help" for more information',
+                                                     formatter_class=argparse.RawTextHelpFormatter))
     args = parser.parse_args()
 
     input_file = args.input_file
@@ -399,7 +411,7 @@ if __name__ == "__main__":
     if args.scoring_mode == "all":
         output_file.write("\nUsing scoring mode - All Templates\n")
         scoring_mode = "All_Templates"
-    elif args.scoring_mode == "msp": 
+    elif args.scoring_mode == "msp":
         output_file.write("\nUsing scoring mode - Matched/Spurious\n")
         scoring_mode = "Matched/Spurious"
     elif args.scoring_mode == "mmi":
@@ -425,7 +437,7 @@ if __name__ == "__main__":
         best_matching, best_res = analyze(*pair, verbose)
         total_result_before = MUC_Result.combine(total_result_before, best_res)
         output_file.write("\n")
-        transform(*pair, best_matching)
+        # transform(*pair, best_matching)
         output_file.write("\n-----------------------------------\n")
 
     if analyze_transformed:
@@ -438,16 +450,18 @@ if __name__ == "__main__":
             _, best_res = analyze(*pair, verbose)
             total_result_after = MUC_Result.combine(total_result_after, best_res)
             output_file.write("\n-----------------------------------\n")
-    
+
     total_result_before.update()
-    output_file.write("\n************************************\nTotal Result Before Transformation : \n************************************\n\n" + 
-    str(total_result_before) + "\n")
-    
+    output_file.write(
+        "\n************************************\nTotal Result Before Transformation : \n************************************\n\n" +
+        str(total_result_before) + "\n")
+
     if analyze_transformed:
         total_result_after.update()
-        output_file.write("\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" + 
-        str(total_result_after) + "\n")
-    
+        output_file.write(
+            "\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" +
+            str(total_result_after) + "\n")
+
     output_file.close()
 
     # Giving POS tags to Missing/Extra Span tokens
@@ -457,7 +471,7 @@ if __name__ == "__main__":
         st = nlp(span)
         for token in st:
             pos = token.pos_
-            #print((token, pos))
+            # print((token, pos))
             if me == "m":
                 try:
                     missing_span[pos] += 1
@@ -468,11 +482,11 @@ if __name__ == "__main__":
                     extra_span[pos] += 1
                 except:
                     extra_span[pos] = 1
-    
+
     ex = nlp("Shining Path")
     for token in ex:
         pos = token.pos_
-        #print((token, pos))
+        # print((token, pos))
 
-    #print("Missing span tokens - POS counts \n" + str(missing_span) + "\n")
-    #print("Extra span tokens - POS counts \n" + str(extra_span))
+    # print("Missing span tokens - POS counts \n" + str(missing_span) + "\n")
+    # print("Extra span tokens - POS counts \n" + str(extra_span))
