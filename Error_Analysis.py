@@ -89,6 +89,33 @@ def extract_span_diff(string1, diff, start):
     else:
         return s
 
+
+def extract_span(predicted_mention, best_gold_mention):
+    # extracting missing/extra parts of the spans that cause span errors
+    # m - missing, e - extra
+    spans = []
+    if best_gold_mention != None:
+        diff_1 = predicted_mention.span[0] - best_gold_mention.span[0]
+        diff_2 = predicted_mention.span[1] - best_gold_mention.span[1]
+        docid_str = "Doc ID: " + predicted_mention.doc_id
+        if diff_1 > 0:
+            chars = extract_span_diff(best_gold_mention.literal, diff_1, True)
+            spans.append((docid_str, chars, "m"))
+        elif diff_1 < 0:
+            chars = extract_span_diff(predicted_mention.literal, -diff_1, True)
+            spans.append((docid_str, chars, "e"))
+        else:
+            pass
+        if diff_2 > 0:
+            chars = extract_span_diff(predicted_mention.literal, diff_2, False)
+            spans.append((docid_str, chars, "e"))
+        elif diff_2 < 0:
+            chars = extract_span_diff(best_gold_mention.literal, -diff_2, False)
+            spans.append((docid_str, chars, "m"))
+        else:
+            pass
+    return spans
+
 # A single mention
 class Mention:
     def __init__(self, doc_id, span, literal, result_type):
