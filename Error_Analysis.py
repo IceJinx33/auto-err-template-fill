@@ -207,22 +207,23 @@ class Role:
         assert predicted_role is None or gold_role is None or predicted_role.result_type == gold_role.result_type, \
             "only roles with the same result type can be compared"
 
-        best_result = predicted_role.result_type() if predicted_role is not None else gold_role.result_type()
+        empty_result = predicted_role.result_type() if predicted_role is not None else gold_role.result_type()
 
         if gold_role is None:
             for mention in predicted_role.mentions:
-                best_result = predicted_role.result_type.combine(best_result, Mention.compare(mention, None, role))
-            return best_result
+                result = predicted_role.result_type.combine(empty_result, Mention.compare(mention, None, role))
+            return result
 
         if predicted_role is None:
             for mentions in gold_role.mentions:
-                best_result = predicted_role.result_type.combine(best_result, Mention.compare(None, mentions, role))
-            return best_result
+                result = predicted_role.result_type.combine(empty_result, Mention.compare(None, mentions, role))
+            return result
 
+        best_result = None
         for matching in all_matchings(len(predicted_role.mentions), len(gold_role.mentions)):
             result = Role.compare_matching(matching, predicted_role, gold_role, role, verbose)
-            if result > best_result: best_result = result
-        return best_result
+            if best_result is None or result > best_result: best_result = result
+        return best_result if best_result is not None else empty_result
 
     @staticmethod
     def compare_matching(matching, predicted_role, gold_role, role, verbose=False):
@@ -310,11 +311,11 @@ class Summary:
         assert predicted_summary is not None or gold_summary is not None, "cannot compare None to None"
         assert predicted_summary is None or gold_summary is None or predicted_summary.result_type == gold_summary.result_type, "only summaries with the same result type can be compared"
 
-        best_result = predicted_summary.result_type() if predicted_summary is not None else gold_summary.result_type()
+        best_result = None
         for matching in all_matchings(len(predicted_summary.templates), len(gold_summary.templates)):
             result = Summary.compare_matching(matching, predicted_summary, gold_summary, verbose)
-            if result > best_result: best_result = result
-        return best_result
+            if best_result is None or result > best_result: best_result = result
+        return best_result if best_result is not None else (predicted_summary.result_type() if predicted_summary is not None else gold_summary.result_type())
 
     @staticmethod
     def compare_matching(matching, predicted_summary, gold_summary, verbose=False):
