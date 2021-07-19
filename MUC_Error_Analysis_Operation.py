@@ -389,7 +389,7 @@ def from_file(input_file, result_type):
 
 
 def analyze(predicted_summary, gold_summary, verbose):
-    output_file.write("Comparing:\n"+str(predicted_summary)+"\n"+str(gold_summary))
+    output_file.write("Comparing:\n"+str(predicted_summary)+"\n"+str(gold_summary)+"\n\n\t--\n\n")
     return Error_Analysis.Summary.compare(predicted_summary, gold_summary, verbose)
 
 
