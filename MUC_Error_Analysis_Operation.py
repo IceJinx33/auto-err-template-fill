@@ -111,15 +111,29 @@ def transform(predicted_summary, gold_summary, best_matching):
 
 class MUC_Result(Error_Analysis.Result):
     # List of names of error types
-    error_names = ["Span_Error", "Spurious_Role_Filler", "Missing_Role_Filler",
-                   "Spurious_Template", "Missing_Template", "Incorrect_Role"]
+    error_names = [
+        "Span_Error",
+        "Spurious_Role_Filler",
+        "Missing_Role_Filler",
+        "Spurious_Template",
+        "Missing_Template",
+        "Incorrect_Role",
+    ]
 
     def __init__(self):
         self.valid = True
 
         self.stats = {}
         for role_name in role_names + ["total"]:
-            self.stats[role_name] = {"p_num": 0, "p_den": 0, "r_num": 0, "r_den": 0, "p": 0, "r": 0, "f1": 0}
+            self.stats[role_name] = {
+                "p_num": 0,
+                "p_den": 0,
+                "r_num": 0,
+                "r_den": 0,
+                "p": 0,
+                "r": 0,
+                "f1": 0,
+            }
 
         self.errors = {}
         for error_name in self.error_names:
@@ -135,17 +149,31 @@ class MUC_Result(Error_Analysis.Result):
         self.log += "\n" + s
 
     def __str__(self, verbose=True):
+        self.update_stats()
         output_string = "Result:"
-        if verbose: output_string += "\n"+self.log
+        if verbose:
+            output_string += "\n" + self.log
         for role_name in ["total"] + role_names:
-            output_string += "\n"+ role_name + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}".format(
-                self.stats[role_name]["f1"],
-                self.stats[role_name]["p"],
-                self.stats[role_name]["r"])
-            if verbose: output_string += "\np_num:" + str(self.stats[role_name]["p_num"]) + " p_den:" + str(
-                self.stats[role_name]["p_den"]) + \
-                                         " r_num:" + str(self.stats[role_name]["r_num"]) + " r_den:" + str(
-                self.stats[role_name]["r_den"])
+            output_string += (
+                "\n"
+                + role_name
+                + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}".format(
+                    self.stats[role_name]["f1"],
+                    self.stats[role_name]["p"],
+                    self.stats[role_name]["r"],
+                )
+            )
+            if verbose:
+                output_string += (
+                    "\np_num:"
+                    + str(self.stats[role_name]["p_num"])
+                    + " p_den:"
+                    + str(self.stats[role_name]["p_den"])
+                    + " r_num:"
+                    + str(self.stats[role_name]["r_num"])
+                    + " r_den:"
+                    + str(self.stats[role_name]["r_den"])
+                )
         # output_string += "\n"
         # for error_name in self.error_names:
         #     output_string += error_name + ": " + str(len(self.error[error_name])) + "\n"
@@ -154,8 +182,14 @@ class MUC_Result(Error_Analysis.Result):
     def __gt__(self, other):
         self.update_stats()
         other.update_stats()
-        return not other.valid or (self.stats["total"]["f1"] > other.stats["total"]["f1"]) or \
-               (self.stats["total"]["f1"] == other.stats["total"]["f1"] and self.span_error < other.span_error)
+        return (
+            not other.valid
+            or (self.stats["total"]["f1"] > other.stats["total"]["f1"])
+            or (
+                self.stats["total"]["f1"] == other.stats["total"]["f1"]
+                and self.span_error < other.span_error
+            )
+        )
 
     @staticmethod
     def combine(result1, result2):
@@ -163,11 +197,15 @@ class MUC_Result(Error_Analysis.Result):
         result.valid = result1.valid and result2.valid
         for key in result.stats.keys():
             for stat in ["p_num", "p_den", "r_num", "r_den"]:
-                result.stats[key][stat] = result1.stats[key][stat] + result2.stats[key][stat]
+                result.stats[key][stat] = (
+                    result1.stats[key][stat] + result2.stats[key][stat]
+                )
         for key in result.errors.keys():
             result.errors[key] = result1.errors[key] + result2.errors[key]
         result.transformations = result1.transformations + result2.transformations
-        result.role_confusion_matrices = result1.role_confusion_matrices + result2.role_confusion_matrices
+        result.role_confusion_matrices = (
+            result1.role_confusion_matrices + result2.role_confusion_matrices
+        )
         result.spans = result1.spans + result2.spans
         result.span_error = result1.span_error + result2.span_error
         result.log = result1.log + "\n" + result2.log
@@ -183,8 +221,9 @@ class MUC_Result(Error_Analysis.Result):
 
     def update_stats(self):
         for _, role in self.stats.items():
-            role["p"], role["r"], role["f1"] = MUC_Result.compute_scores(role["p_num"], role["p_den"], role["r_num"],
-                                                                         role["r_den"])
+            role["p"], role["r"], role["f1"] = MUC_Result.compute_scores(
+                role["p_num"], role["p_den"], role["r_num"], role["r_den"]
+            )
         return
 
     @staticmethod
@@ -192,26 +231,32 @@ class MUC_Result(Error_Analysis.Result):
         # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
         length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
         if mode == "absolute":
-            val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (length1 + length2)
+            val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
+                length1 + length2
+            )
             return val if val < 1 else 1
         elif mode == "geometric_mean":
             intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
-            return 1 - ((length1 * length2 / (intersection ** 2)) if intersection > 0 else 0)
+            return 1 - (
+                (length1 * length2 / (intersection ** 2)) if intersection > 0 else 0
+            )
 
     def update(self, comparison_event, args=None):
 
-        if args is None: args = {}
+        if args is None:
+            args = {}
 
         self.write_log(".")
         if not self.valid:
             self.write_log("Invalid matching.")
             return
-            
+
         self.write_log(comparison_event)
         for k, v in args.items():
             if "Template" not in comparison_event:
-                self.write_log(k+": "+str(v))
-            else: self.write_log(str(v))
+                self.write_log(k + ": " + str(v))
+            else:
+                self.write_log(str(v))
 
         if comparison_event == "Spurious_Role_Filler":
             self.stats[args["role_name"]]["p_den"] += 1
@@ -228,7 +273,9 @@ class MUC_Result(Error_Analysis.Result):
             best_gold_mention = None
             predicted_mention = args["predicted_mention"]
             for gold_mention in args["gold_mentions"].mentions:
-                span_error = MUC_Result.span_scorer(predicted_mention.span, gold_mention.span)
+                span_error = MUC_Result.span_scorer(
+                    predicted_mention.span, gold_mention.span
+                )
                 if span_error < min_span_error:
                     min_span_error = span_error
                     best_gold_mention = gold_mention
@@ -248,7 +295,9 @@ class MUC_Result(Error_Analysis.Result):
             else:
                 self.span_error += min_span_error
                 self.errors["Span_Error"].append(args["role_name"])
-                self.spans += Error_Analysis.extract_span(predicted_mention, best_gold_mention)
+                self.spans += Error_Analysis.extract_span(
+                    predicted_mention, best_gold_mention
+                )
 
         elif comparison_event == "Spurious_Template":
             self.errors["Spurious_Template"].append(args["predicted_template"])
@@ -257,7 +306,10 @@ class MUC_Result(Error_Analysis.Result):
             self.errors["Missing_Template"].append(args["gold_template"])
 
         elif comparison_event == "Matched_Template":
-            if args["predicted_template"].roles["incident_type"] != args["gold_template"].roles["incident_type"]:
+            if (
+                args["predicted_template"].roles["incident_type"]
+                != args["gold_template"].roles["incident_type"]
+            ):
                 self.valid = False
 
         elif comparison_event == "Incorrect_Role":
@@ -269,9 +321,9 @@ class MUC_Result(Error_Analysis.Result):
 
 def normalize_string(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
-    regex = re.compile(r'\b(a|an|the)\b', re.UNICODE)
-    s = re.sub(regex, ' ', s.lower())
-    return ' '.join([c for c in s if c.isalnum()])
+    regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
+    s = re.sub(regex, " ", s.lower())
+    return " ".join([c for c in s if c.isalnum()])
 
 
 def mention_tokens_index(doc, mention):
@@ -290,7 +342,7 @@ def mention_tokens_index(doc, mention):
     if len(mention) == 0:
         return 1, 0
     for i in range(len(doc)):
-        if (doc[i: i + len(mention)] == mention):
+        if doc[i : i + len(mention)] == mention:
             start = i
             end = i + len(mention) - 1
             break
@@ -300,23 +352,43 @@ def mention_tokens_index(doc, mention):
 
 
 def add_script_args(parser):
-    parser.add_argument("-i", "--input_file", type=str,
-                        help="The path to the input file given to the system")
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="Increase output verbosity")
-    parser.add_argument("-at", "--analyze_transformed", action="store_true",
-                        help="Analyze transformed data")
-    parser.add_argument("-s", "--scoring_mode", type=str, choices=["all", "msp", "mmi", "mat"],
-                        help=textwrap.dedent('''\
+    parser.add_argument(
+        "-i",
+        "--input_file",
+        type=str,
+        help="The path to the input file given to the system",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Increase output verbosity"
+    )
+    parser.add_argument(
+        "-at",
+        "--analyze_transformed",
+        action="store_true",
+        help="Analyze transformed data",
+    )
+    parser.add_argument(
+        "-s",
+        "--scoring_mode",
+        type=str,
+        choices=["all", "msp", "mmi", "mat"],
+        help=textwrap.dedent(
+            """\
                         Choose scoring mode according to MUC:
                         all - All Templates
                         msp - Matched/Spurious
                         mmi - Matched/Missing
                         mat - Matched Only
-                    '''),
-                        default="All_Templates")
-    parser.add_argument("-o", "--output_file", type=str,
-                        help="The path to the output file the system writes to")
+                    """
+        ),
+        default="All_Templates",
+    )
+    parser.add_argument(
+        "-o",
+        "--output_file",
+        type=str,
+        help="The path to the output file the system writes to",
+    )
     return parser
 
 
@@ -349,25 +421,39 @@ def from_file(input_file, result_type):
             roles = {}
             for role_name, role_data in pred_temp.items():
                 if role_name == "incident_type":
-                    mention = Error_Analysis.Mention(docid, (1,0), role_data, result_type)
-                    roles[role_name] = Error_Analysis.Role(docid, [mention], False, result_type)
+                    mention = Error_Analysis.Mention(
+                        docid, (1, 0), role_data, result_type
+                    )
+                    roles[role_name] = Error_Analysis.Role(
+                        docid, [mention], False, result_type
+                    )
                     continue
                 mentions = []
                 for entity in role_data:
                     for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
-                        mentions.append(Error_Analysis.Mention(docid, span, mention, result_type))
-                roles[role_name] = Error_Analysis.Role(docid, mentions, False, result_type)
-            pred_templates.append(Error_Analysis.Template(docid, roles, False, result_type))
+                        mentions.append(
+                            Error_Analysis.Mention(docid, span, mention, result_type)
+                        )
+                roles[role_name] = Error_Analysis.Role(
+                    docid, mentions, False, result_type
+                )
+            pred_templates.append(
+                Error_Analysis.Template(docid, roles, False, result_type)
+            )
 
         for gold_temp in example["gold_templates"]:
             roles = {}
             for role_name, role_data in gold_temp.items():
                 if role_name == "incident_type":
-                    mention = Error_Analysis.Mention(docid, (1,0), role_data, result_type)
+                    mention = Error_Analysis.Mention(
+                        docid, (1, 0), role_data, result_type
+                    )
                     mentions = Error_Analysis.Mentions(docid, [mention], result_type)
-                    roles[role_name] = Error_Analysis.Role(docid, [mentions], True, result_type)
+                    roles[role_name] = Error_Analysis.Role(
+                        docid, [mentions], True, result_type
+                    )
                     continue
                 coref_mentions = []
                 for entity in role_data:
@@ -375,10 +461,18 @@ def from_file(input_file, result_type):
                     for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
-                        mentions.append(Error_Analysis.Mention(docid, span, mention, result_type))
-                    coref_mentions.append(Error_Analysis.Mentions(docid, mentions, result_type))
-                roles[role_name] = Error_Analysis.Role(docid, coref_mentions, True, result_type)
-            gold_templates.append(Error_Analysis.Template(docid, roles, True, result_type))
+                        mentions.append(
+                            Error_Analysis.Mention(docid, span, mention, result_type)
+                        )
+                    coref_mentions.append(
+                        Error_Analysis.Mentions(docid, mentions, result_type)
+                    )
+                roles[role_name] = Error_Analysis.Role(
+                    docid, coref_mentions, True, result_type
+                )
+            gold_templates.append(
+                Error_Analysis.Template(docid, roles, True, result_type)
+            )
 
         pred_summary = Error_Analysis.Summary(docid, pred_templates, False, result_type)
         gold_summary = Error_Analysis.Summary(docid, gold_templates, True, result_type)
@@ -389,14 +483,23 @@ def from_file(input_file, result_type):
 
 
 def analyze(predicted_summary, gold_summary, verbose):
-    output_file.write("Comparing:\n"+str(predicted_summary)+"\n"+str(gold_summary)+"\n\n\t--\n\n")
+    output_file.write(
+        "Comparing:\n"
+        + str(predicted_summary)
+        + "\n"
+        + str(gold_summary)
+        + "\n\n\t--\n\n"
+    )
     return Error_Analysis.Summary.compare(predicted_summary, gold_summary, verbose)
 
 
 if __name__ == "__main__":
-    parser = add_script_args(argparse.ArgumentParser(usage=
-                                                     'Use "python MUC_Error_Analysis_Operation.py --help" for more information',
-                                                     formatter_class=argparse.RawTextHelpFormatter))
+    parser = add_script_args(
+        argparse.ArgumentParser(
+            usage='Use "python MUC_Error_Analysis_Operation.py --help" for more information',
+            formatter_class=argparse.RawTextHelpFormatter,
+        )
+    )
     args = parser.parse_args()
 
     input_file = args.input_file
@@ -449,10 +552,11 @@ if __name__ == "__main__":
     #         total_result_after = MUC_Result.combine(total_result_after, best_res)
     #         output_file.write("\n-----------------------------------\n")
 
-    # total_result_before.update()
-    # output_file.write(
-    #     "\n************************************\nTotal Result Before Transformation : \n************************************\n\n" +
-    #     str(total_result_before) + "\n")
+    output_file.write(
+        "\n************************************\nTotal Result Before Transformation : \n************************************\n\n"
+        + str(total_result_before)
+        + "\n"
+    )
 
     # if analyze_transformed:
     #     total_result_after.update()
@@ -460,7 +564,7 @@ if __name__ == "__main__":
     #         "\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" +
     #         str(total_result_after) + "\n")
 
-    # output_file.close()
+    output_file.close()
 
     """
     # Giving POS tags to Missing/Extra Span tokens
