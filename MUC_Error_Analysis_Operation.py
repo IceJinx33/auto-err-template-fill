@@ -12,7 +12,7 @@ from Error_Analysis import *
 nlp = spacy.load("en_core_web_sm")
 
 # List of names of roles (keys for rows in each template)
-role_names = ["PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
 
 """
 class TemplateTransformation:
@@ -132,20 +132,20 @@ class MUC_Result(Error_Analysis.Result):
         self.log = ""
 
     def write_log(self, s):
-        self.log += s + "\n"
+        self.log += "\n" + s
 
     def __str__(self, verbose=True):
-        output_string = "Result:\n\n"
-        if verbose: output_string += self.log + "\n\n"
+        output_string = "Result:"
+        if verbose: output_string += "\n"+self.log
         for role_name in ["total"] + role_names:
-            output_string += role_name + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}\n".format(
+            output_string += "\n"+ role_name + ": f1: {0:.4f}, precision:{1:.4f}, recall: {2:.4f}".format(
                 self.stats[role_name]["f1"],
                 self.stats[role_name]["p"],
                 self.stats[role_name]["r"])
-            if verbose: output_string += " p_num:" + str(self.stats[role_name]["p_num"]) + " p_den:" + str(
+            if verbose: output_string += "\np_num:" + str(self.stats[role_name]["p_num"]) + " p_den:" + str(
                 self.stats[role_name]["p_den"]) + \
                                          " r_num:" + str(self.stats[role_name]["r_num"]) + " r_den:" + str(
-                self.stats[role_name]["r_den"]) + "\n"
+                self.stats[role_name]["r_den"])
         # output_string += "\n"
         # for error_name in self.error_names:
         #     output_string += error_name + ": " + str(len(self.error[error_name])) + "\n"
@@ -169,8 +169,8 @@ class MUC_Result(Error_Analysis.Result):
         result.transformations = result1.transformations + result2.transformations
         result.role_confusion_matrices = result1.role_confusion_matrices + result2.role_confusion_matrices
         result.spans = result1.spans + result2.spans
-        result.span_score = result1.span_score + result2.span_score
-        result.log = result1.write_log + "--------------------------\n" + result2.write_log
+        result.span_error = result1.span_error + result2.span_error
+        result.log = result1.log + "\n" + result2.log
         return result
 
     @staticmethod
@@ -200,19 +200,18 @@ class MUC_Result(Error_Analysis.Result):
 
     def update(self, comparison_event, args=None):
 
-        if args is None:
-            args = {}
-        if "Template" in comparison_event:
-            self.write_log("--------------")
+        if args is None: args = {}
 
+        self.write_log(".")
         if not self.valid:
             self.write_log("Invalid matching.")
             return
-
+            
         self.write_log(comparison_event)
         for k, v in args.items():
-            self.write_log(k)
-            self.write_log(str(v))
+            if "Template" not in comparison_event:
+                self.write_log(k+": "+str(v))
+            else: self.write_log(str(v))
 
         if comparison_event == "Spurious_Role_Filler":
             self.stats[args["role_name"]]["p_den"] += 1
@@ -339,46 +338,47 @@ def from_file(input_file, result_type):
     with open(input_file, encoding="utf-8") as f:
         inp_dict = json.load(f)
 
-    for docid in inp_dict:
-
+    for docid, example in inp_dict.items():
         pred_templates = []
         gold_templates = []
 
-        example = inp_dict[docid]
         doc_tokens = normalize_string(example["doctext"].replace(" ##", "")).split()
         documents[docid] = doc_tokens
 
         for pred_temp in example["pred_templates"]:
             roles = {}
-            for role in pred_temp:
-                if role == "incident_type":
-                    incident = pred_temp["incident_type"]
+            for role_name, role_data in pred_temp.items():
+                if role_name == "incident_type":
+                    mention = Error_Analysis.Mention(docid, (1,0), role_data, result_type)
+                    roles[role_name] = Error_Analysis.Role(docid, [mention], False, result_type)
                     continue
                 mentions = []
-                for entity in pred_temp[role]:
+                for entity in role_data:
                     for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
                         mentions.append(Error_Analysis.Mention(docid, span, mention, result_type))
-                roles[role] = Error_Analysis.Role(docid, mentions, False, result_type)
-            pred_templates.append(Error_Analysis.Template(docid, incident, roles, False, result_type))
+                roles[role_name] = Error_Analysis.Role(docid, mentions, False, result_type)
+            pred_templates.append(Error_Analysis.Template(docid, roles, False, result_type))
 
         for gold_temp in example["gold_templates"]:
             roles = {}
-            for role in gold_temp:
-                if role == "incident_type":
-                    incident = gold_temp["incident_type"]
+            for role_name, role_data in gold_temp.items():
+                if role_name == "incident_type":
+                    mention = Error_Analysis.Mention(docid, (1,0), role_data, result_type)
+                    mentions = Error_Analysis.Mentions(docid, [mention], result_type)
+                    roles[role_name] = Error_Analysis.Role(docid, [mentions], True, result_type)
                     continue
                 coref_mentions = []
-                for entity in gold_temp[role]:
+                for entity in role_data:
                     mentions = []
                     for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
                         mentions.append(Error_Analysis.Mention(docid, span, mention, result_type))
                     coref_mentions.append(Error_Analysis.Mentions(docid, mentions, result_type))
-                roles[role] = Error_Analysis.Role(docid, coref_mentions, True, result_type)
-            gold_templates.append(Error_Analysis.Template(docid, incident, roles, True, result_type))
+                roles[role_name] = Error_Analysis.Role(docid, coref_mentions, True, result_type)
+            gold_templates.append(Error_Analysis.Template(docid, roles, True, result_type))
 
         pred_summary = Error_Analysis.Summary(docid, pred_templates, False, result_type)
         gold_summary = Error_Analysis.Summary(docid, gold_templates, True, result_type)
@@ -389,10 +389,7 @@ def from_file(input_file, result_type):
 
 
 def analyze(predicted_summary, gold_summary, verbose):
-    output_file.write("Comparing Prediction:\n")
-    output_file.write(str(predicted_summary) + "\n")
-    output_file.write("\nTo Gold:\n")
-    output_file.write(str(gold_summary) + "\n\n")
+    output_file.write("Comparing:\n"+str(predicted_summary)+"\n"+str(gold_summary))
     return Error_Analysis.Summary.compare(predicted_summary, gold_summary, verbose)
 
 
@@ -433,37 +430,39 @@ if __name__ == "__main__":
     total_result_before = MUC_Result()
 
     for pair in tqdm(data, desc="Analyzing Data and Applying Transformations: "):
-        output_file.write("\n-----------------------------------\n")
-        best_matching, best_res = analyze(*pair, verbose)
-        total_result_before = MUC_Result.combine(total_result_before, best_res)
-        output_file.write("\n")
+        output_file.write("\n\n\t---\n\n")
+        result = analyze(*pair, verbose)
+        output_file.write(str(result))
+        total_result_before = MUC_Result.combine(total_result_before, result)
+        # output_file.write("\n")
         # transform(*pair, best_matching)
-        output_file.write("\n-----------------------------------\n")
+        # output_file.write("\n-----------------------------------\n")
 
-    if analyze_transformed:
-        output_file.write("ANALYZING TRANSFORMED DATA ...\n")
+    # if analyze_transformed:
+    #     output_file.write("ANALYZING TRANSFORMED DATA ...\n")
 
-        total_result_after = MUC_Result()
+    #     total_result_after = MUC_Result()
 
-        for pair in tqdm(transformed_data, desc="Analyzing Transformed Data: "):
-            output_file.write("\n-----------------------------------\n")
-            _, best_res = analyze(*pair, verbose)
-            total_result_after = MUC_Result.combine(total_result_after, best_res)
-            output_file.write("\n-----------------------------------\n")
+    #     for pair in tqdm(transformed_data, desc="Analyzing Transformed Data: "):
+    #         output_file.write("\n-----------------------------------\n")
+    #         _, best_res = analyze(*pair, verbose)
+    #         total_result_after = MUC_Result.combine(total_result_after, best_res)
+    #         output_file.write("\n-----------------------------------\n")
 
-    total_result_before.update()
-    output_file.write(
-        "\n************************************\nTotal Result Before Transformation : \n************************************\n\n" +
-        str(total_result_before) + "\n")
+    # total_result_before.update()
+    # output_file.write(
+    #     "\n************************************\nTotal Result Before Transformation : \n************************************\n\n" +
+    #     str(total_result_before) + "\n")
 
-    if analyze_transformed:
-        total_result_after.update()
-        output_file.write(
-            "\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" +
-            str(total_result_after) + "\n")
+    # if analyze_transformed:
+    #     total_result_after.update()
+    #     output_file.write(
+    #         "\n***********************************\nTotal Result After Transformation : \n***********************************\n\n" +
+    #         str(total_result_after) + "\n")
 
-    output_file.close()
+    # output_file.close()
 
+    """
     # Giving POS tags to Missing/Extra Span tokens
     missing_span = {}
     extra_span = {}
@@ -487,6 +486,6 @@ if __name__ == "__main__":
     for token in ex:
         pos = token.pos_
         # print((token, pos))
-
+    """
     # print("Missing span tokens - POS counts \n" + str(missing_span) + "\n")
     # print("Extra span tokens - POS counts \n" + str(extra_span))
