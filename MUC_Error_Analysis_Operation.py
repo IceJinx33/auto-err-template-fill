@@ -1,5 +1,6 @@
 import argparse
 import json
+from os import error
 import re
 import textwrap
 
@@ -152,7 +153,7 @@ class MUC_Result(Error_Analysis.Result):
         self.update_stats()
         output_string = "Result:"
         if verbose:
-            output_string += "\n" + self.log
+            output_string += "\n" + self.log + "\n"
         for role_name in ["total"] + role_names:
             output_string += (
                 "\n"
@@ -174,9 +175,10 @@ class MUC_Result(Error_Analysis.Result):
                     + " r_den:"
                     + str(self.stats[role_name]["r_den"])
                 )
-        # output_string += "\n"
-        # for error_name in self.error_names:
-        #     output_string += error_name + ": " + str(len(self.error[error_name])) + "\n"
+        output_string += "\n"
+        for error_name, error_list in self.errors.items():
+            output_string += "\n" + error_name + ": " + str(len(error_list))
+            if error_name == "Span_Error": output_string += " ("+str(self.span_error)+")"
         return output_string
 
     def __gt__(self, other):
@@ -187,7 +189,7 @@ class MUC_Result(Error_Analysis.Result):
             or (self.stats["total"]["f1"] > other.stats["total"]["f1"])
             or (
                 self.stats["total"]["f1"] == other.stats["total"]["f1"]
-                and self.span_error < other.span_error
+                and self.span_error > other.span_error
             )
         )
 
@@ -208,7 +210,7 @@ class MUC_Result(Error_Analysis.Result):
         )
         result.spans = result1.spans + result2.spans
         result.span_error = result1.span_error + result2.span_error
-        result.log = result1.log + "\n" + result2.log
+        result.log = result1.log + ("\n" if (result1.log != "" and result2.log != "") else "") + result2.log 
         return result
 
     @staticmethod
@@ -227,19 +229,17 @@ class MUC_Result(Error_Analysis.Result):
         return
 
     @staticmethod
-    def span_scorer(span1, span2, mode="absolute"):
+    def span_scorer(span1, span2, mode="geometric_mean"):
         # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
         length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
         if mode == "absolute":
             val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
                 length1 + length2
             )
-            return val if val < 1 else 1
+            return min(val, 1)
         elif mode == "geometric_mean":
             intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
-            return 1 - (
-                (length1 * length2 / (intersection ** 2)) if intersection > 0 else 0
-            )
+            return 1 - (( (intersection ** 2) / (length1 * length2) ) if length1 * length2 > 0 else 0)
 
     def update(self, comparison_event, args=None):
 
@@ -513,26 +513,26 @@ if __name__ == "__main__":
     output_file = open(args.output_file, "w")
 
     if args.scoring_mode == "all":
-        output_file.write("\nUsing scoring mode - All Templates\n")
+        output_file.write("Using scoring mode - All Templates\n")
         scoring_mode = "All_Templates"
     elif args.scoring_mode == "msp":
-        output_file.write("\nUsing scoring mode - Matched/Spurious\n")
+        output_file.write("Using scoring mode - Matched/Spurious\n")
         scoring_mode = "Matched/Spurious"
     elif args.scoring_mode == "mmi":
-        output_file.write("\nUsing scoring mode - Matched/Missing\n")
+        output_file.write("Using scoring mode - Matched/Missing\n")
         scoring_mode = "Matched/Missing"
     elif args.scoring_mode == "mat":
-        output_file.write("\nUsing scoring mode - Matched Only\n")
+        output_file.write("Using scoring mode - Matched Only\n")
         scoring_mode = "Matched_Only"
     else:
-        output_file.write("\nUsing default scoring mode - All Templates\n")
+        output_file.write("Using default scoring mode - All Templates\n")
         scoring_mode = "All_Templates"
 
     data, docs = from_file(input_file, MUC_Result)
 
     transformed_data = []
 
-    output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...\n")
+    output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...")
 
     total_result_before = MUC_Result()
 
