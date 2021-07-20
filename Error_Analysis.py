@@ -265,16 +265,18 @@ class Role:
         )
 
         if gold_role is None:
+            result = empty_result
             for mention in predicted_role.mentions:
                 result = predicted_role.result_type.combine(
-                    empty_result, Mention.compare(mention, None, role)
+                    result, Mention.compare(mention, None, role)
                 )
             return result
 
         if predicted_role is None:
+            result = empty_result
             for mentions in gold_role.mentions:
-                result = predicted_role.result_type.combine(
-                    empty_result, Mention.compare(None, mentions, role)
+                result = gold_role.result_type.combine(
+                    result, Mention.compare(None, mentions, role)
                 )
             return result
 
@@ -359,11 +361,27 @@ class Template:
             result.update(
                 "Spurious_Template", {"predicted_template": predicted_template}
             )
+            for role_name in predicted_template.roles:
+                comparison = Role.compare(
+                    predicted_template.roles[role_name],
+                    None,
+                    role_name,
+                    verbose,
+                )
+                result = predicted_template.result_type.combine(result, comparison)
             return result
 
         if predicted_template is None:
             result = gold_template.result_type()
             result.update("Missing_Template", {"gold_template": gold_template})
+            for role_name in gold_template.roles:
+                comparison = Role.compare(
+                    None,
+                    gold_template.roles[role_name],
+                    role_name,
+                    verbose,
+                )
+                result = gold_template.result_type.combine(result, comparison)
             return result
 
         assert (
