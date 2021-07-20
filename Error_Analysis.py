@@ -285,7 +285,7 @@ class Role:
             result = Role.compare_matching(
                 matching, predicted_role, gold_role, role, verbose
             )
-            if best_result is None or result > best_result:
+            if (best_result is None or result > best_result) and result.valid:
                 best_result = result
         return best_result if best_result is not None else empty_result
 
@@ -438,7 +438,7 @@ class Summary:
             result = Summary.compare_matching(
                 matching, predicted_summary, gold_summary, verbose
             )
-            if best_result is None or result > best_result:
+            if (best_result is None or result > best_result) and result.valid:
                 best_result = result
         return (
             best_result

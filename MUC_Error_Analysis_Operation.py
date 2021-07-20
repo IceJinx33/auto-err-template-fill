@@ -3,13 +3,13 @@ import json
 import re
 import textwrap
 
-import spacy
+# import spacy
 from tqdm import tqdm
 
 import Error_Analysis
 from Error_Analysis import *
 
-nlp = spacy.load("en_core_web_sm")
+# nlp = spacy.load("en_core_web_sm")
 
 # List of names of roles (keys for rows in each template)
 role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
@@ -307,8 +307,12 @@ class MUC_Result(Error_Analysis.Result):
 
         elif comparison_event == "Matched_Template":
             if (
-                args["predicted_template"].roles["incident_type"]
-                != args["gold_template"].roles["incident_type"]
+                args["predicted_template"].roles["incident_type"].mentions[0].literal
+                != args["gold_template"]
+                .roles["incident_type"]
+                .mentions[0]
+                .mentions[0]
+                .literal
             ):
                 self.valid = False
 
