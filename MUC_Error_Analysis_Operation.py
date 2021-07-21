@@ -191,16 +191,10 @@ class MUC_Result(Error_Analysis.Result):
             or (
                 self.stats["total"]["f1"] == other.stats["total"]["f1"]
                 and (
-                    len(self.errors["Missing_Role_Filler"]) < len(other.errors["Missing_Role_Filler"])
+                    len(self.errors["Span_Error"]) > len(other.errors["Span_Error"])
                     or (
-                        len(self.errors["Missing_Role_Filler"]) == len(other.errors["Missing_Role_Filler"])
-                        and (
-                            len(self.errors["Spurious_Role_Filler"]) < len(other.errors["Spurious_Role_Filler"])
-                            or (
-                                len(self.errors["Spurious_Role_Filler"]) == len(other.errors["Spurious_Role_Filler"])
-                                and self.span_error < other.span_error
-                            )
-                        )
+                        len(self.errors["Span_Error"]) == len(other.errors["Span_Error"])
+                        and self.span_error < other.span_error
                     )
                 )
             )
