@@ -14,15 +14,15 @@ def span_scorer(span1, span2, mode="geometric_mean"):
         intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
         return 1 - (( (intersection ** 2) / (length1 * length2) ) if length1 * length2 > 0 else 0)
 
-def transform(point1, point2, matching = None, inner = False, clean_inner = False):
+def transform(point1, point2, matching, fast = True, inner = False, clean_inner = False):
     assert point1 is not None or point2 is not None, "cannot transform None to None"
     assert None in [point1, point2] or len(point1) == len(point2), "matched points must have the same length"
-    if matching is not None: point1_string, point2_string = (None if point1 is None else "/".join([str(p) for p in point1])), (None if point2 is None else "/".join([str(p) for p in point2]))
+    if not fast: point1_string, point2_string = (None if point1 is None else "/".join([str(p) for p in point1])), (None if point2 is None else "/".join([str(p) for p in point2]))
     result = Result()
     if (point1 is not None and len(point1) == 1) or (point2 is not None and len(point2) == 1):
-        if matching is not None:
+        if not fast:
             if point1 is None: 
-                result.log += "Add template: "+point2_string
+                result.log += "Add template: "+point2_string#point2_string[:-2]+"P-"+point2_string[-2:]+" <-> "+point2_string
                 result.errors["Missing_Template"] += [point2_string]
             elif point2 is None: 
                 result.log += "Remove template: "+point1_string
@@ -50,16 +50,16 @@ def transform(point1, point2, matching = None, inner = False, clean_inner = Fals
                 "f1": 0,
             }
         if point1 is None: 
-            if matching is not None: result.log += "Add item: "+point2_string
+            if not fast: result.log += "Add item: "+point2_string
             result.stats[point2[1]]["r_den"] += 1
             result.stats["total"]["r_den"] += 1
-            if matching is not None: result.errors["Missing_Role_Filler"] += [point2_string]
+            if not fast: result.errors["Missing_Role_Filler"] += [point2_string]
             result.error += 1
         elif point2 is None: 
-            if matching is not None: result.log += "Remove item: "+point1_string
+            if not fast: result.log += "Remove item: "+point1_string
             result.stats[point1[1]]["p_den"] += 1
             result.stats["total"]["p_den"] += 1
-            if matching is not None: result.errors["Spurious_Role_Filler"] += [point1_string]
+            if not fast: result.errors["Spurious_Role_Filler"] += [point1_string]
             result.error += 1
         else:
             if not inner:
@@ -67,26 +67,27 @@ def transform(point1, point2, matching = None, inner = False, clean_inner = Fals
                 result.stats[point1[1]]["r_den"] += 1
                 result.stats["total"]["p_den"] += 1
                 result.stats["total"]["r_den"] += 1
-            if point1[0] != point2[0] and matching is not None:
+
+            if point1[0] != point2[0]:
                 matched = ([point1[0]],[point2[0]]) in matching
                 if not matched:
-                    if matching is not None: result.errors["Incorrect_Template"] += [point1_string]
+                    if not fast: result.errors["Incorrect_Template"] += [point1_string]
                     result.error += 1
-                    if matching is not None: result.log += ("\n" if inner else "")+point1_string+" -> (change template)"
-                elif matching is not None: result.log += ("\n" if inner else "")+point1_string+" -> (update template)"
-                result = Result.combine(result, transform([point2[0]]+point1[1:], point2, matching, inner = True, clean_inner = matched), close = True)
+                    if not fast: result.log += ("\n" if inner else "")+point1_string+" -> (change template)"
+                elif not fast: result.log += ("\n" if inner else "")+point1_string+" -> (update template)"
+                result = Result.combine(result, transform([point2[0]]+point1[1:], point2, matching, fast, inner = True, clean_inner = matched), close = True)
             elif point1[1] != point2[1]:
-                if matching is not None: result.log += ("\n" if inner else "")+point1_string+" => (change role)"
-                if matching is not None: result.errors["Incorrect_Role"] += [point1_string]
+                if not fast: result.log += ("\n" if inner else "")+point1_string+" => (change role)"
+                if not fast: result.errors["Incorrect_Role"] += [point1_string]
                 result.error += 1
-                result = Result.combine(result, transform([point1[0], point2[1]]+point1[2:], point2, matching, inner = True), close = True)
+                result = Result.combine(result, transform([point1[0], point2[1]]+point1[2:], point2, matching, fast, inner = True), close = True)
             elif (isinstance(point1[2], str) and point1[2] != point2[2]) or (type(point2[2]) is list and point1[2] not in point2[2]):
                 if isinstance(point1[2], str) and isinstance(point2[2], str):
-                    if matching is not None: result.log += ("\n" if inner else "")+point1_string+" => (change incident type)"
+                    if not fast: result.log += ("\n" if inner else "")+point1_string+" => (change incident type)"
                     result.error += 1
                     result.valid = False
-                    if matching is not None: result.errors["Incorrect_Incident_Type"] += [point1_string]
-                    result = Result.combine(result, transform(point1[:2]+[point2[2]]+point1[3:], point2, matching, matching, inner = True), close = True)
+                    if not fast: result.errors["Incorrect_Incident_Type"] += [point1_string]
+                    result = Result.combine(result, transform(point1[:2]+[point2[2]]+point1[3:], point2, matching, fast, inner = True), close = True)
                 elif type(point1[2]) is tuple and type(point2[2]) is list:
                     best_score = 1
                     best_span = point2[0]
@@ -95,27 +96,56 @@ def transform(point1, point2, matching = None, inner = False, clean_inner = Fals
                         if score < best_score: 
                             best_score = score
                             best_span = span
-                    if matching is not None: 
+                    if not fast: 
                         if best_score < 1:
                             result.log += ("\n" if inner else "")+point1_string+" => (alter span)"
                             result.errors["Span_Error"] += [point1_string]
                         else: 
                             result.log += ("\n" if inner else "")+point1_string+" => (change mention)"
                     result.error += best_score
-                    result = Result.combine(result, transform(point1[:2]+[best_span]+point1[3:], point2, matching, matching, inner = True), close = True)
-                elif matching is not None:
+                    result = Result.combine(result, transform(point1[:2]+[best_span]+point1[3:], point2, matching, fast, inner = True), close = True)
+                elif not fast:
                     result.log += ("\n" if inner else "")+"ERROR"
             else: 
-                if matching is not None: 
+                if not fast: 
                     if inner: result.log += "\n"+point2_string+' =| (done)'
                     else: result.log += point1_string+" = "+point2_string+' =| (done)'
-                else: result.template_pairs.append((point1[0],point2[0]))
                 if not inner or clean_inner:
                     result.stats[point1[1]]["p_num"] += 1
                     result.stats[point1[1]]["r_num"] += 1
                     result.stats["total"]["p_num"] += 1
                     result.stats["total"]["r_num"] += 1
     return result
+
+class Solution:
+    """Represents a matching of data points between predicted and gold summaries.
+    Contains a list of pairs of data points. """
+    def __init__(self, matching):
+        self.matching = matching
+
+    def compute(self, fast = True):
+        result = Result()
+        result.log = "Solution:"
+        for pair in self.matching:
+            result = Result.combine(result, transform(*pair, self.matching, fast))
+            if not result.valid: break
+        return result
+
+    def from_data(template_matching, predicted_templates, gold_templates, point_matching, predicted_singles, gold_singles):
+        matching = []
+        for pair in template_matching["pairs"]:
+            matching.append((predicted_templates[pair[0]], gold_templates[pair[1]]))
+        for unmatched_predicted in template_matching["unmatched_predicted"]:
+            matching.append((predicted_templates[unmatched_predicted], None))
+        for unmatched_gold in template_matching["unmatched_gold"]:
+            matching.append((None, gold_templates[unmatched_gold]))
+        for pair in point_matching["pairs"]:
+            matching.append((predicted_singles[pair[0]], gold_singles[pair[1]]))
+        for unmatched_predicted in point_matching["unmatched_predicted"]:
+            matching.append((predicted_singles[unmatched_predicted], None))
+        for unmatched_gold in point_matching["unmatched_gold"]:
+            matching.append((None, gold_singles[unmatched_gold]))
+        return Solution(matching)
 
 class Result():
     error_names = [
@@ -148,7 +178,6 @@ class Result():
             self.errors[error_name] = []
         
         self.error = 0
-        self.template_pairs = []
 
     def __str__(self, verbosity = 4):
         if not self.valid: return "INVALID MATCHING"
@@ -201,7 +230,6 @@ class Result():
         for key in result.errors.keys():
             result.errors[key] = result1.errors[key] + result2.errors[key]
         result.error = result1.error + result2.error
-        result.template_pairs = result1.template_pairs + result2.template_pairs
         return result
 
     @staticmethod
@@ -219,40 +247,68 @@ class Result():
             )
         return
 
-def template_match(matching, data):
-    filtered_template_pairs = []
-    for template_pair in matching["result"].template_pairs:
-        pass
-
-
-def analyze(predicted_points, gold_points, verbose = False):
+def generate_solutions(predicted_points, gold_points):
     predicted_templates = [p for p in predicted_points if len(p) == 1]
     gold_templates = [p for p in gold_points if len(p) == 1]
     predicted_singles = [p for p in predicted_points if len(p) > 1]
     gold_singles = [p for p in gold_points if len(p) > 1]
     data = (predicted_templates, gold_templates, predicted_singles, gold_singles)
 
-    comparison_matrix = [[transform(i,j) for j in gold_singles] for i in predicted_singles]
+    predicted_templates_sorted = {}
+    gold_templates_sorted = {}
+    for predicted_single in predicted_singles:
+        if predicted_single[1] == "incident_type":
+            if predicted_single[2] not in predicted_templates_sorted.keys(): 
+                predicted_templates_sorted[predicted_single[2]] = []
+            predicted_templates_sorted[predicted_single[2]].append(predicted_single[0])
+    for gold_single in gold_singles:
+        if gold_single[1] == "incident_type":
+            if gold_single[2] not in gold_templates_sorted.keys(): 
+                gold_templates_sorted[gold_single[2]] = []
+            gold_templates_sorted[gold_single[2]].append(gold_single[0])
 
-    best_matching = None
-    for matching in generate_matchings(len(predicted_singles), len(gold_singles), comparison_matrix):
-        if matching["result"].valid and (best_matching is None or matching["result"] > best_matching["result"]):
-            best_matching = matching
-    
-    return best_matching["result"]
+    print(predicted_templates_sorted, gold_templates_sorted)
 
 
-def generate_matchings(a, b, comparison_matrix, i = None):
+    for template_matching in generate_matchings(len(predicted_templates), len(gold_templates), data, True):
+
+        for point_matching in generate_matchings(len(predicted_singles), len(gold_singles), data):
+            yield Solution.from_data(template_matching, predicted_templates, gold_templates, point_matching, predicted_singles, gold_singles)
+
+def generate_matchings(a, b, data, templates = False, i = None):
     if i is None: i = a-1
-    if i == -1: yield {"pairs": [], "unmatched_predicted": list(range(a)), "unmatched_gold": list(range(b)), "result": Result()}
+    if i == -1: yield {"pairs": [], "unmatched_predicted": list(range(a)), "unmatched_gold": list(range(b))}
     else:
-        for matching in generate_matchings(a, b, comparison_matrix, i-1):
+        for matching in generate_matchings(a, b, data, templates, i-1):
             yield matching
             for j in matching["unmatched_gold"]:
+                if templates and not valid(i,j,data): 
+                    continue
                 yield {"pairs": matching["pairs"]+[(i,j)], 
                 "unmatched_predicted": [n for n in matching["unmatched_predicted"] if n != i],
-                "unmatched_gold": [n for n in matching["unmatched_gold"] if n != j], 
-                "result": Result.combine(matching["result"], comparison_matrix[i][j])}
+                "unmatched_gold": [n for n in matching["unmatched_gold"] if n != j]}
+
+def valid(i,j, data):
+    predicted_template, gold_template = data[0][i][0], data[1][j][0]
+    predicted_type = None
+    for point in data[2]:
+        if point[0] == predicted_template: 
+            predicted_type = point[2]
+            break
+    for point in data[3]:
+        if point[0] == gold_template:
+            return point[2] == predicted_type
+    return False
+
+def analyze(predicted_points, gold_points, verbose = False):
+    best_result = None
+    best_solution = None
+    for solution in generate_solutions(predicted_points, gold_points):
+        result = solution.compute(fast = True)
+        if best_result is None or result > best_result:
+            best_result = result
+            best_solution = solution
+    return best_solution.compute(fast = False)
 
 def normalize_string(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
