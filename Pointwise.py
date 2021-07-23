@@ -103,7 +103,7 @@ def transform(point1, point2, matching, fast = True, inner = False, clean_inner 
                         else: 
                             result.log += ("\n" if inner else "")+point1_string+" => (change mention)"
                     result.error += best_score
-                    result = Result.combine(result, transform(point1[:2]+[span]+point1[3:], point2, matching, fast, inner = True), close = True)
+                    result = Result.combine(result, transform(point1[:2]+[best_span]+point1[3:], point2, matching, fast, inner = True), close = True)
                 elif not fast:
                     result.log += ("\n" if inner else "")+"ERROR"
             else: 

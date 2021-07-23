@@ -82,11 +82,11 @@ def transform(point1, point2, matching = None, inner = False, clean_inner = Fals
                 result = Result.combine(result, transform([point1[0], point2[1]]+point1[2:], point2, matching, inner = True), close = True)
             elif (isinstance(point1[2], str) and point1[2] != point2[2]) or (type(point2[2]) is list and point1[2] not in point2[2]):
                 if isinstance(point1[2], str) and isinstance(point2[2], str):
-                    if not fast: result.log += ("\n" if inner else "")+point1_string+" => (change incident type)"
+                    if matching is not None: result.log += ("\n" if inner else "")+point1_string+" => (change incident type)"
                     result.error += 1
                     result.valid = False
-                    if not fast: result.errors["Incorrect_Incident_Type"] += [point1_string]
-                    result = Result.combine(result, transform(point1[:2]+[point2[2]]+point1[3:], point2, matching, fast, inner = True), close = True)
+                    if matching is not None: result.errors["Incorrect_Incident_Type"] += [point1_string]
+                    result = Result.combine(result, transform(point1[:2]+[point2[2]]+point1[3:], point2, matching, matching, inner = True), close = True)
                 elif type(point1[2]) is tuple and type(point2[2]) is list:
                     best_score = 1
                     best_span = point2[0]
@@ -95,15 +95,15 @@ def transform(point1, point2, matching = None, inner = False, clean_inner = Fals
                         if score < best_score: 
                             best_score = score
                             best_span = span
-                    if not fast: 
+                    if matching is not None: 
                         if best_score < 1:
                             result.log += ("\n" if inner else "")+point1_string+" => (alter span)"
                             result.errors["Span_Error"] += [point1_string]
                         else: 
                             result.log += ("\n" if inner else "")+point1_string+" => (change mention)"
                     result.error += best_score
-                    result = Result.combine(result, transform(point1[:2]+[span]+point1[3:], point2, matching, fast, inner = True), close = True)
-                elif not fast:
+                    result = Result.combine(result, transform(point1[:2]+[best_span]+point1[3:], point2, matching, matching, inner = True), close = True)
+                elif matching is not None:
                     result.log += ("\n" if inner else "")+"ERROR"
             else: 
                 if matching is not None: 
