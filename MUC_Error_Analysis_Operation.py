@@ -178,7 +178,8 @@ class MUC_Result(Error_Analysis.Result):
         output_string += "\n"
         for error_name, error_list in self.errors.items():
             output_string += "\n" + error_name + ": " + str(len(error_list))
-            if error_name == "Span_Error": output_string += " ("+str(self.span_error)+")"
+            if error_name == "Span_Error":
+                output_string += " (" + str(self.span_error) + ")"
         return output_string
 
     def __gt__(self, other):
@@ -210,7 +211,11 @@ class MUC_Result(Error_Analysis.Result):
         )
         result.spans = result1.spans + result2.spans
         result.span_error = result1.span_error + result2.span_error
-        result.log = result1.log + ("\n" if (result1.log != "" and result2.log != "") else "") + result2.log 
+        result.log = (
+            result1.log
+            + ("\n" if (result1.log != "" and result2.log != "") else "")
+            + result2.log
+        )
         return result
 
     @staticmethod
@@ -229,7 +234,7 @@ class MUC_Result(Error_Analysis.Result):
         return
 
     @staticmethod
-    def span_scorer(span1, span2, mode="geometric_mean"):
+    def span_scorer(span1, span2, mode="absolute"):
         # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
         length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
         if mode == "absolute":
@@ -239,7 +244,11 @@ class MUC_Result(Error_Analysis.Result):
             return min(val, 1)
         elif mode == "geometric_mean":
             intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
-            return 1 - (( (intersection ** 2) / (length1 * length2) ) if length1 * length2 > 0 else 0)
+            return 1 - (
+                ((intersection ** 2) / (length1 * length2))
+                if length1 * length2 > 0
+                else 0
+            )
 
     def update(self, comparison_event, args=None):
 
