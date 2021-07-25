@@ -178,8 +178,8 @@ class MUC_Result(Error_Analysis.Result):
         output_string += "\n"
         for error_name, error_list in self.errors.items():
             output_string += "\n" + error_name + ": " + str(len(error_list))
-            if error_name == "Span_Error":
-                output_string += " (" + str(self.span_error) + ")"
+            if error_name == "Span_Error": output_string += " ("+str(self.span_error)+")"
+        # output_string += "\n"+str(self.role_confusion_matrices)
         return output_string
 
     def __gt__(self, other):
@@ -190,7 +190,13 @@ class MUC_Result(Error_Analysis.Result):
             or (self.stats["total"]["f1"] > other.stats["total"]["f1"])
             or (
                 self.stats["total"]["f1"] == other.stats["total"]["f1"]
-                and self.span_error > other.span_error
+                and (
+                    len(self.errors["Span_Error"]) > len(other.errors["Span_Error"])
+                    or (
+                        len(self.errors["Span_Error"]) == len(other.errors["Span_Error"])
+                        and self.span_error < other.span_error
+                    )
+                )
             )
         )
 
@@ -236,12 +242,13 @@ class MUC_Result(Error_Analysis.Result):
     @staticmethod
     def span_scorer(span1, span2, mode="absolute"):
         # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
+        if span1 == span2: return 0
         length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
         if mode == "absolute":
             val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
                 length1 + length2
             )
-            return min(val, 1)
+            return min(val, 1.0)
         elif mode == "geometric_mean":
             intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
             return 1 - (
@@ -293,12 +300,12 @@ class MUC_Result(Error_Analysis.Result):
             self.stats[args["role_name"]]["p_den"] += 1
             self.stats["total"]["r_den"] += 1
             self.stats["total"]["p_den"] += 1
-            if min_span_error == 0:
+            if min_span_error <= 0:
                 self.stats[args["role_name"]]["r_num"] += 1
                 self.stats[args["role_name"]]["p_num"] += 1
                 self.stats["total"]["r_num"] += 1
                 self.stats["total"]["p_num"] += 1
-            elif min_span_error == 1:
+            elif min_span_error >= 1:
                 self.errors["Missing_Role_Filler"].append(args["role_name"])
                 self.errors["Spurious_Role_Filler"].append(args["role_name"])
             else:
@@ -326,7 +333,7 @@ class MUC_Result(Error_Analysis.Result):
                 self.valid = False
 
         elif comparison_event == "Incorrect_Role":
-            pass
+            self.errors["Incorrect_Role"].append(args["role_pair"])
 
         else:
             raise Exception("Illegal comparison event: " + comparison_event)

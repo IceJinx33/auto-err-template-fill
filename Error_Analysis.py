@@ -396,14 +396,31 @@ class Template:
             "Matched_Template",
             {"predicted_template": predicted_template, "gold_template": gold_template},
         )
+        confusion_matrix = []
         for role_name in predicted_template.roles:
-            comparison = Role.compare(
-                predicted_template.roles[role_name],
-                gold_template.roles[role_name],
-                role_name,
-                verbose,
-            )
-            result = predicted_template.result_type.combine(result, comparison)
+            confusion_row = []
+            diagonal_result = Role.compare(
+                    predicted_template.roles[role_name],
+                    gold_template.roles[role_name],
+                    role_name,
+                    verbose,
+                )
+            result = predicted_template.result_type.combine(result, diagonal_result)
+            for other_role_name in predicted_template.roles:
+                if other_role_name == role_name: 
+                    confusion_row.append(diagonal_result)
+                    continue
+                cross_result = Role.compare(
+                    predicted_template.roles[role_name],
+                    gold_template.roles[other_role_name],
+                    role_name,
+                    verbose,
+                )
+                confusion_row.append(cross_result)
+                if cross_result > diagonal_result:
+                    result.update("Incorrect_Role", {"role_pair": (role_name, other_role_name)})
+            confusion_matrix.append(confusion_row)
+        result.role_confusion_matrices.append(confusion_matrix)
         return result
 
 
