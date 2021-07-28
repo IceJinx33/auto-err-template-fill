@@ -230,7 +230,9 @@ def analyze(predicted_points, gold_points, verbose = False):
     predicted_singles = [p for p in predicted_points if len(p) > 1]
     gold_singles = [p for p in gold_points if len(p) > 1]
     data = (predicted_templates, gold_templates, predicted_singles, gold_singles)
+    print("premat")
     comparison_matrix = [[transform(i,j) for j in gold_singles] for i in predicted_singles]
+    print("postmat")
     best_matching = None
     for matching in generate_matchings(len(predicted_singles), len(gold_singles), comparison_matrix):
         if matching["result"].valid and (best_matching is None or matching["result"] > best_matching["result"]):
