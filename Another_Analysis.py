@@ -97,33 +97,40 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
         for template_pair in template_matching:
             # TODO: deal with incident type
             for role_name in role_names:
-                best_result = None
-                for mention_matching in mention_matches(template_pair[0][role_name], template_pair[1][role_name]):
-                    rolewise_result = Result()
-                    for mention_pair in mention_matching:
-                        if mention_pair[0] is None: 
-                            rolewise_result.stats["r_den"] += 1
-                            rolewise_result.error_score += 1
-                            if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
-                        elif mention_pair[1] is None:
-                            rolewise_result.stats["p_den"] += 1
-                            rolewise_result.error_score += 1
-                            if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["spurious_role_filler"] += 1
-                        else:
-                            rolewise_result.stats["num"] += int(mention_pair[2] == 0)
-                            rolewise_result.stats["p_den"] += 1
-                            rolewise_result.stats["r_den"] += 1
-                            rolewise_result.error_score += mention_pair[2]
-                            if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: rolewise_result.errors["span_error"] += 1
-                    if rolewise_result.valid and (best_result is None or rolewise_result > best_result):
-                        best_result = rolewise_result
-
+                if template_pair[0] is None: 
+                    for _ in template_pair[1]:
+                        rolewise_result.stats["r_den"] += 1
+                        rolewise_result.error_score += 1
+                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
+                elif template_pair[1] is None: 
+                    for _ in template_pair[0]:
+                        rolewise_result.stats["r_den"] += 1
+                        rolewise_result.error_score += 1
+                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
+                else:
+                    best_result = None
+                    for mention_matching in mention_matches(template_pair[0][role_name], template_pair[1][role_name]):
+                        rolewise_result = Result()
+                        for mention_pair in mention_matching:
+                            if mention_pair[0] is None: 
+                                rolewise_result.stats["r_den"] += 1
+                                rolewise_result.error_score += 1
+                                if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
+                            elif mention_pair[1] is None:
+                                rolewise_result.stats["p_den"] += 1
+                                rolewise_result.error_score += 1
+                                if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["spurious_role_filler"] += 1
+                            else:
+                                rolewise_result.stats["num"] += int(mention_pair[2] == 0)
+                                rolewise_result.stats["p_den"] += 1
+                                rolewise_result.stats["r_den"] += 1
+                                rolewise_result.error_score += mention_pair[2]
+                                if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: rolewise_result.errors["span_error"] += 1
+                        if rolewise_result.valid and (best_result is None or rolewise_result > best_result):
+                            best_result = rolewise_result
+                    result = Result.combine(result, best_result)
         return result
                     
-
-
-
-
     best_matching = Matching()
     for template_matching in template_matches(predicted_templates, gold_templates):
         matching = analyze_template_matching(template_matching)
