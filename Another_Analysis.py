@@ -1,6 +1,16 @@
 import json, re, argparse, textwrap
 from tqdm import tqdm
 
+role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+error_names = [
+        "Span_Error",
+        "Spurious_Role_Filler",
+        "Missing_Role_Filler",
+        "Spurious_Template",
+        "Missing_Template",
+        "Incorrect_Role",
+    ]
+    
 # Modes: "MUC", "MUC_Errors", "Errors"
 def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = False):
 
@@ -17,19 +27,28 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
                 }
             self.error_score = 0
 
+            self.errors = {}
+            for error_name in error_names: self.errors[error_name] = 0
+
+        def __str__(self, verbosity = 4):
+            result_string = "Result:"
+            for k, v in self.stats.items():
+                result_string += "\n" + k + ": " + str(v)
+            result_string += "\n\nError Score: " + str(self.error_score)
+            return result_string
+
         def update_stats(self):
 
-            def compute_scores(p_num, p_den, r_num, r_den, beta=1):
-                p = 0 if p_den == 0 else p_num / float(p_den)
-                r = 0 if r_den == 0 else r_num / float(r_den)
+            def compute_scores(num, p_den, r_den, beta=1):
+                p = 0 if p_den == 0 else num / float(p_den)
+                r = 0 if r_den == 0 else num / float(r_den)
                 d = beta * beta * p + r
                 f1 = 0 if d == 0 else (1 + beta * beta) * p * r / d
                 return (p, r, f1)
 
-            for _, role in self.stats.items():
-                role["p"], role["r"], role["f1"] = compute_scores(
-                    role["p_num"], role["p_den"], role["r_num"], role["r_den"]
-                )
+            self.stats["p"], self.stats["r"], self.stats["f1"] = compute_scores(
+                self.stats["num"], self.stats["p_den"], self.stats["r_den"]
+            )
             return
 
         def __gt__(self, other):
@@ -47,9 +66,9 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
                 result.stats[key] = result1.stats[key] + result2.stats[key]
             result.error_score = result1.error_score + result2.error_score
 
-        def compute():
+        def compute(self):
             """Generate the log and transformations for this matching"""
-            pass
+            return
 
     def template_matches(predicted_templates, gold_templates):
         if len(predicted_templates) == 0: yield [(None, gold_template) for gold_template in gold_templates]
@@ -85,9 +104,7 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
             if span1 == span2: return 0
             length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
             if mode == "absolute":
-                val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
-                    length1 + length2
-                )
+                val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / ( length1 + length2 )
                 return min(val, 1.0)
             elif mode == "geometric_mean":
                 intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
@@ -97,16 +114,17 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
         for template_pair in template_matching:
             # TODO: deal with incident type
             for role_name in role_names:
+                rolewise_result = Result()
                 if template_pair[0] is None: 
                     for _ in template_pair[1]:
                         rolewise_result.stats["r_den"] += 1
                         rolewise_result.error_score += 1
-                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
+                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["Missing_Role_Filler"] += 1
                 elif template_pair[1] is None: 
                     for _ in template_pair[0]:
                         rolewise_result.stats["r_den"] += 1
                         rolewise_result.error_score += 1
-                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
+                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["Spurious_Role_Filler"] += 1
                 else:
                     best_result = None
                     for mention_matching in mention_matches(template_pair[0][role_name], template_pair[1][role_name]):
@@ -131,12 +149,12 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
                     result = Result.combine(result, best_result)
         return result
                     
-    best_matching = Matching()
+    best_result = Result()
     for template_matching in template_matches(predicted_templates, gold_templates):
-        matching = analyze_template_matching(template_matching)
-        if matching > best_matching: best_matching = matching
-    best_matching.compute()
-    return best_matching
+        result = analyze_template_matching(template_matching)
+        if result > best_result: best_result = result
+    best_result.compute()
+    return best_result
 
 def from_file(input_file):
     """
