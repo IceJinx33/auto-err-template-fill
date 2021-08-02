@@ -12,7 +12,7 @@ error_names = [
     ]
     
 # Modes: "MUC", "MUC_Errors", "Errors"
-def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = False):
+def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mode = "All_Templates", verbose = False):
 
     class Result:
         def __init__(self):
@@ -34,7 +34,7 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
             result_string = "Result:"
             for k, v in self.stats.items():
                 result_string += "\n" + k + ": " + str(v)
-            result_string += "\n\nError Score: " + str(self.error_score)
+            result_string += "\nError Score: " + str(self.error_score)
             return result_string
 
         def update_stats(self):
@@ -65,6 +65,7 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
             for key in ["num", "p_den", "r_den"]:
                 result.stats[key] = result1.stats[key] + result2.stats[key]
             result.error_score = result1.error_score + result2.error_score
+            return result
 
         def compute(self):
             """Generate the log and transformations for this matching"""
@@ -90,8 +91,9 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
                 for i in range(len(gold_mentions)):
                     best_score = 1
                     #best_span = None
-                    for span in gold_mentions[i]:
-                        score = span_scorer(predicted_mentions[0], span)
+                    for mention in gold_mentions[i]:
+                        span = mention[0]
+                        score = span_scorer(predicted_mentions[0][0], span)
                         if score < best_score: 
                             best_score = score
                             #best_span = span
@@ -114,39 +116,40 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", verbose = 
         for template_pair in template_matching:
             # TODO: deal with incident type
             for role_name in role_names:
+                if role_name == "incident_type": continue
                 rolewise_result = Result()
-                if template_pair[0] is None: 
+                if template_pair[0] is None and scoring_mode in ["All_Templates", "Matched/Missing"]:
                     for _ in template_pair[1]:
                         rolewise_result.stats["r_den"] += 1
                         rolewise_result.error_score += 1
                         if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["Missing_Role_Filler"] += 1
-                elif template_pair[1] is None: 
+                elif template_pair[1] is None and scoring_mode in ["All_Templates", "Matched/Spurious"]:
                     for _ in template_pair[0]:
                         rolewise_result.stats["r_den"] += 1
                         rolewise_result.error_score += 1
                         if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["Spurious_Role_Filler"] += 1
                 else:
-                    best_result = None
+                    rolewise_result = None
                     for mention_matching in mention_matches(template_pair[0][role_name], template_pair[1][role_name]):
-                        rolewise_result = Result()
+                        matching_result = Result()
                         for mention_pair in mention_matching:
                             if mention_pair[0] is None: 
-                                rolewise_result.stats["r_den"] += 1
-                                rolewise_result.error_score += 1
-                                if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["unmatched_role_filler"] += 1
+                                matching_result.stats["r_den"] += 1
+                                matching_result.error_score += 1
+                                if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Missing_Role_Filler"] += 1
                             elif mention_pair[1] is None:
-                                rolewise_result.stats["p_den"] += 1
-                                rolewise_result.error_score += 1
-                                if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["spurious_role_filler"] += 1
+                                matching_result.stats["p_den"] += 1
+                                matching_result.error_score += 1
+                                if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Spurious_Role_Filler"] += 1
                             else:
-                                rolewise_result.stats["num"] += int(mention_pair[2] == 0)
-                                rolewise_result.stats["p_den"] += 1
-                                rolewise_result.stats["r_den"] += 1
-                                rolewise_result.error_score += mention_pair[2]
-                                if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: rolewise_result.errors["span_error"] += 1
-                        if rolewise_result.valid and (best_result is None or rolewise_result > best_result):
-                            best_result = rolewise_result
-                    result = Result.combine(result, best_result)
+                                matching_result.stats["num"] += int(mention_pair[2] == 0)
+                                matching_result.stats["p_den"] += 1
+                                matching_result.stats["r_den"] += 1
+                                matching_result.error_score += mention_pair[2]
+                                if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: matching_result.errors["Span_Error"] += 1
+                        if matching_result.valid and (rolewise_result is None or matching_result > rolewise_result):
+                            rolewise_result = matching_result
+                result = Result.combine(result, rolewise_result)
         return result
                     
     best_result = Result()
@@ -168,15 +171,13 @@ def from_file(input_file):
     :params input_file: valid path to input file
     :type input_file: string
     """
-    data = []
-    documents = {}
-
+        
     def normalize_string(s):
         """Lower text and remove punctuation, articles and extra whitespace."""
         regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
         s = re.sub(regex, " ", s.lower())
         return " ".join([c for c in s if c.isalnum()])
-    
+
     def mention_tokens_index(doc, mention):
         """
         This function returns the starting and ending indexes of the tokenized mention
@@ -201,49 +202,52 @@ def from_file(input_file):
             return 1, 0
         return start, end
 
+    data = []
+    documents = {}
+
     with open(input_file, encoding="utf-8") as f:
         inp_dict = json.load(f)
 
     for docid, example in inp_dict.items():
-        pred_summary = []
-        gold_summary = []
+        pred_templates = []
+        gold_templates = []
 
         doc_tokens = normalize_string(example["doctext"].replace(" ##", "")).split()
         documents[docid] = doc_tokens
 
-        for i in range(len(example["pred_templates"])):
-            pred_temp = example["pred_templates"][i]
-            template_text = ["templateP"+str(i)]
-            pred_summary.append(template_text)
+        for pred_temp in example["pred_templates"]:
+            roles = {}
             for role_name, role_data in pred_temp.items():
-                role_text = template_text+[role_name]
                 if role_name == "incident_type":
-                    pred_summary.append(role_text+[role_data])
+                    roles[role_name] = role_data
                     continue
+                mentions = []
                 for entity in role_data:
-                    for mention in entity:                        
+                    for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
-                        pred_summary.append(role_text+[span])
+                        mentions.append((span, mention))
+                roles[role_name] = mentions
+            pred_templates.append(roles)
 
-        for i in range(len(example["gold_templates"])):
-            gold_temp = example["gold_templates"][i]
-            template_text = ["templateG"+str(i)]
-            gold_summary.append(template_text)
+        for gold_temp in example["gold_templates"]:
+            roles = {}
             for role_name, role_data in gold_temp.items():
-                role_text = template_text+[role_name]
                 if role_name == "incident_type":
-                    gold_summary.append(role_text+[role_data])
+                    roles[role_name] = role_data
                     continue
+                coref_mentions = []
                 for entity in role_data:
                     mentions = []
-                    for mention in entity:                        
+                    for mention in entity:
                         mention_tokens = normalize_string(mention).split()
                         span = mention_tokens_index(doc_tokens, mention_tokens)
-                        mentions.append(span)
-                    gold_summary.append(role_text+[mentions])
+                        mentions.append((span, mention))
+                    coref_mentions.append(mentions)
+                roles[role_name] = coref_mentions
+            gold_templates.append(roles)
 
-        data.append((pred_summary, gold_summary))
+        data.append((pred_templates, gold_templates))
 
     return data, documents
 
@@ -328,10 +332,8 @@ def main():
     for pair in tqdm(data, desc="Analyzing Data and Applying Transformations: "):
         output_file.write("\n\n\t---\n\n")
         output_file.write("Comparing:")
-        for p in pair[0]: output_file.write("\n  "+"/".join([str(i) for i in p]))
-        output_file.write("\n -to- ")
-        for p in pair[1]: output_file.write("\n  "+"/".join([str(i) for i in p]))
-        result = analyze(*pair, "MUC_Errors", verbose)
+        output_file.write(str(pair[0])+"\n -to- "+str(pair[1]))
+        result = analyze(*pair, "MUC_Errors", scoring_mode, verbose)
         output_file.write("\n\n"+result.__str__(verbosity = 4))
 
     output_file.close()
