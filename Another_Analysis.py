@@ -9,8 +9,21 @@ error_names = [
         "Spurious_Template",
         "Missing_Template",
         "Incorrect_Role",
+        "Incorrect_Incident_Type",
     ]
     
+def summary_to_str(templates):
+    result_string = "Summary:"
+    for template in templates:
+        if template is None: 
+            result_string += " None"
+            continue
+        result_string += "\n|-Template ("+template["incident_type"]+"):"
+        for k, v in template.items():
+            if k == "incident_type": continue
+            result_string += "\n| |-"+k+": "+", ".join([str(i) for i in v])
+    return result_string
+
 # Modes: "MUC", "MUC_Errors", "Errors"
 def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mode = "All_Templates", verbose = False):
 
@@ -35,6 +48,8 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
             for k, v in self.stats.items():
                 result_string += "\n" + k + ": " + str(v)
             result_string += "\nError Score: " + str(self.error_score)
+            for k, v in self.errors.items():
+                result_string += "\n" + k + ": " + str(v)
             return result_string
 
         def update_stats(self):
@@ -114,48 +129,74 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
 
         result = Result()
         for template_pair in template_matching:
-            # TODO: deal with incident type
-            for role_name in role_names:
-                if role_name == "incident_type": continue
-                rolewise_result = Result()
-                if template_pair[0] is None and scoring_mode in ["All_Templates", "Matched/Missing"]:
-                    for _ in template_pair[1]:
+            pairwise_result = Result()
+            print(summary_to_str([template_pair[0]]), summary_to_str([template_pair[1]]))
+            if template_pair[0] is None and scoring_mode in ["All_Templates", "Matched/Missing"]:
+                for role_name, mentions in template_pair[1].items():
+                    if role_name == "incident_type": 
+                        pairwise_result.stats["r_den"] += 1
+                        pairwise_result.error_score += 1
+                        if mode in ["MUC_Errors", "Errors"]: pairwise_result.errors["Missing_Template"] += 1
+                    else:
+                        for _ in mentions:
+                            pairwise_result.stats["r_den"] += 1
+                            pairwise_result.error_score += 1
+                            if mode in ["MUC_Errors", "Errors"]: pairwise_result.errors["Missing_Role_Filler"] += 1
+            elif template_pair[1] is None and scoring_mode in ["All_Templates", "Matched/Spurious"]:
+                for role_name, mentions in template_pair[0].items():
+                    if role_name == "incident_type": 
+                        pairwise_result.stats["p_den"] += 1
+                        pairwise_result.error_score += 1
+                        if mode in ["MUC_Errors", "Errors"]: pairwise_result.errors["Spurious_Template"] += 1
+                    else:
+                        for _ in mentions:
+                            pairwise_result.stats["p_den"] += 1
+                            pairwise_result.error_score += 1
+                            if mode in ["MUC_Errors", "Errors"]: pairwise_result.errors["Spurious_Role_Filler"] += 1
+            else:
+                for role_name in role_names:
+                    print(role_name)
+                    rolewise_result = Result()
+                    if role_name == "incident_type": 
+                        match = template_pair[0][role_name] == template_pair[1][role_name]
+                        if mode in ["MUC", "MUC_Errors"]: assert match, "incompatible matching"
+                        rolewise_result.stats["num"] += int(match)
+                        rolewise_result.stats["p_den"] += 1
                         rolewise_result.stats["r_den"] += 1
-                        rolewise_result.error_score += 1
-                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["Missing_Role_Filler"] += 1
-                elif template_pair[1] is None and scoring_mode in ["All_Templates", "Matched/Spurious"]:
-                    for _ in template_pair[0]:
-                        rolewise_result.stats["r_den"] += 1
-                        rolewise_result.error_score += 1
-                        if mode in ["MUC_Errors", "Errors"]: rolewise_result.errors["Spurious_Role_Filler"] += 1
-                else:
-                    rolewise_result = None
-                    for mention_matching in mention_matches(template_pair[0][role_name], template_pair[1][role_name]):
-                        matching_result = Result()
-                        for mention_pair in mention_matching:
-                            if mention_pair[0] is None: 
-                                matching_result.stats["r_den"] += 1
-                                matching_result.error_score += 1
-                                if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Missing_Role_Filler"] += 1
-                            elif mention_pair[1] is None:
-                                matching_result.stats["p_den"] += 1
-                                matching_result.error_score += 1
-                                if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Spurious_Role_Filler"] += 1
-                            else:
-                                matching_result.stats["num"] += int(mention_pair[2] == 0)
-                                matching_result.stats["p_den"] += 1
-                                matching_result.stats["r_den"] += 1
-                                matching_result.error_score += mention_pair[2]
-                                if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: matching_result.errors["Span_Error"] += 1
-                        if matching_result.valid and (rolewise_result is None or matching_result > rolewise_result):
-                            rolewise_result = matching_result
-                result = Result.combine(result, rolewise_result)
+                        rolewise_result.error_score += int(not match)
+                        if mode in ["MUC_Errors", "Errors"] and not match: rolewise_result.errors["Incorrect_Incident_Type"] += 1
+                    else:
+                        rolewise_result = None
+                        for mention_matching in mention_matches(template_pair[0][role_name], template_pair[1][role_name]):
+                            print(mention_matching)
+                            matching_result = Result()
+                            for mention_pair in mention_matching:
+                                if mention_pair[0] is None: 
+                                    matching_result.stats["r_den"] += 1
+                                    matching_result.error_score += 1
+                                    if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Missing_Role_Filler"] += 1
+                                elif mention_pair[1] is None:
+                                    matching_result.stats["p_den"] += 1
+                                    matching_result.error_score += 1
+                                    if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Spurious_Role_Filler"] += 1
+                                else:
+                                    matching_result.stats["num"] += int(mention_pair[2] == 0)
+                                    matching_result.stats["p_den"] += 1
+                                    matching_result.stats["r_den"] += 1
+                                    matching_result.error_score += mention_pair[2]
+                                    if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: matching_result.errors["Span_Error"] += 1
+                            if matching_result.valid and (rolewise_result is None or matching_result > rolewise_result):
+                                rolewise_result = matching_result
+                            print(matching_result)
+                    pairwise_result = Result.combine(pairwise_result, rolewise_result)
+            result = Result.combine(result, pairwise_result)
+        print(result)
         return result
                     
-    best_result = Result()
+    best_result = None
     for template_matching in template_matches(predicted_templates, gold_templates):
         result = analyze_template_matching(template_matching)
-        if result > best_result: best_result = result
+        if result.valid and (best_result is None or result > best_result): best_result = result
     best_result.compute()
     return best_result
 
@@ -329,12 +370,15 @@ def main():
 
     output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...")
 
+    i = 0
     for pair in tqdm(data, desc="Analyzing Data and Applying Transformations: "):
+        if i == 3: break
         output_file.write("\n\n\t---\n\n")
         output_file.write("Comparing:")
-        output_file.write(str(pair[0])+"\n -to- "+str(pair[1]))
+        output_file.write("\n"+summary_to_str(pair[0])+"\n -to- \n"+summary_to_str(pair[1]))
         result = analyze(*pair, "MUC_Errors", scoring_mode, verbose)
         output_file.write("\n\n"+result.__str__(verbosity = 4))
+        i += 1
 
     output_file.close()
 
