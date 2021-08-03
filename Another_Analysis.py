@@ -24,67 +24,73 @@ def summary_to_str(templates):
             result_string += "\n| |-"+k+": "+", ".join([str(i) for i in v])
     return result_string
 
+
+class Result:
+    def __init__(self):
+        self.valid = True
+        self.stats = {
+            "num": 0,
+            "p_den": 0,
+            "r_den": 0,
+            "p": 0,
+            "r": 0,
+            "f1": 0 
+            }
+        self.error_score = 0
+
+        self.errors = {}
+        for error_name in error_names: self.errors[error_name] = 0
+
+    def __str__(self, verbosity = 4):
+        result_string = "Result:"
+        for k, v in self.stats.items():
+            result_string += "\n" + k + ": " + str(v)
+        result_string += "\nError Score: " + str(self.error_score)
+        for k, v in self.errors.items():
+            result_string += "\n" + k + ": " + str(v)
+        return result_string
+
+    def update_stats(self):
+
+        def compute_scores(num, p_den, r_den, beta=1):
+            p = 0 if p_den == 0 else num / float(p_den)
+            r = 0 if r_den == 0 else num / float(r_den)
+            d = beta * beta * p + r
+            f1 = 0 if d == 0 else (1 + beta * beta) * p * r / d
+            return (p, r, f1)
+
+        self.stats["p"], self.stats["r"], self.stats["f1"] = compute_scores(
+            self.stats["num"], self.stats["p_den"], self.stats["r_den"]
+        )
+        return
+
+    def __gt__(self, other):
+        if not other.valid: return True
+        self.update_stats()
+        other.update_stats()
+        if self.stats["f1"] != other.stats["f1"]: 
+            return self.stats["f1"] > other.stats["f1"]
+        return self.error_score < other.error_score
+
+    def combine(result1, result2):
+        result = Result()
+        result.valid = result1.valid and result2.valid
+        for key in ["num", "p_den", "r_den"]:
+            result.stats[key] = result1.stats[key] + result2.stats[key]
+        result.error_score = result1.error_score + result2.error_score
+
+        for error_name in error_names:
+            result.errors[error_name] = result1.errors[error_name] + result2.errors[error_name]
+
+        return result
+
+    def compute(self):
+        """Generate the log and transformations for this matching"""
+        return
+
+
 # Modes: "MUC", "MUC_Errors", "Errors"
 def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mode = "All_Templates", verbose = False):
-
-    class Result:
-        def __init__(self):
-            self.valid = True
-            self.stats = {
-                "num": 0,
-                "p_den": 0,
-                "r_den": 0,
-                "p": 0,
-                "r": 0,
-                "f1": 0 
-                }
-            self.error_score = 0
-
-            self.errors = {}
-            for error_name in error_names: self.errors[error_name] = 0
-
-        def __str__(self, verbosity = 4):
-            result_string = "Result:"
-            for k, v in self.stats.items():
-                result_string += "\n" + k + ": " + str(v)
-            result_string += "\nError Score: " + str(self.error_score)
-            for k, v in self.errors.items():
-                result_string += "\n" + k + ": " + str(v)
-            return result_string
-
-        def update_stats(self):
-
-            def compute_scores(num, p_den, r_den, beta=1):
-                p = 0 if p_den == 0 else num / float(p_den)
-                r = 0 if r_den == 0 else num / float(r_den)
-                d = beta * beta * p + r
-                f1 = 0 if d == 0 else (1 + beta * beta) * p * r / d
-                return (p, r, f1)
-
-            self.stats["p"], self.stats["r"], self.stats["f1"] = compute_scores(
-                self.stats["num"], self.stats["p_den"], self.stats["r_den"]
-            )
-            return
-
-        def __gt__(self, other):
-            if not other.valid: return True
-            self.update_stats()
-            other.update_stats()
-            if self.stats["f1"] != other.stats["f1"]: 
-                return self.stats["f1"] > other.stats["f1"]
-            return self.error_score < other.error_score
-
-        def combine(result1, result2):
-            result = Result()
-            result.valid = result1.valid and result2.valid
-            for key in ["num", "p_den", "r_den"]:
-                result.stats[key] = result1.stats[key] + result2.stats[key]
-            result.error_score = result1.error_score + result2.error_score
-            return result
-
-        def compute(self):
-            """Generate the log and transformations for this matching"""
-            return
 
     def template_matches(predicted_templates, gold_templates):
         if len(predicted_templates) == 0: yield [(None, gold_template) for gold_template in gold_templates]
@@ -184,7 +190,10 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
                                     matching_result.stats["p_den"] += 1
                                     matching_result.stats["r_den"] += 1
                                     matching_result.error_score += mention_pair[2]
-                                    if mode in ["MUC_Errors", "Errors"] and mention_pair[2] > 0: matching_result.errors["Span_Error"] += 1
+                                    if mode in ["MUC_Errors", "Errors"] and 0 < mention_pair[2] < 1: matching_result.errors["Span_Error"] += 1
+                                    if mode in ["MUC_Errors", "Errors"] and mention_pair[2] == 1: 
+                                        matching_result.errors["Missing_Role_Filler"] += 1
+                                        matching_result.errors["Spurious_Role_Filler"] += 1
                             if matching_result.valid and (rolewise_result is None or matching_result > rolewise_result):
                                 rolewise_result = matching_result
                             print(matching_result)
@@ -370,16 +379,19 @@ def main():
 
     output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...")
 
-    i = 0
+    total_result_before = Result()
+
     for pair in tqdm(data, desc="Analyzing Data and Applying Transformations: "):
-        if i == 3: break
         output_file.write("\n\n\t---\n\n")
         output_file.write("Comparing:")
         output_file.write("\n"+summary_to_str(pair[0])+"\n -to- \n"+summary_to_str(pair[1]))
         result = analyze(*pair, "MUC_Errors", scoring_mode, verbose)
         output_file.write("\n\n"+result.__str__(verbosity = 4))
-        i += 1
-
+        total_result_before = Result.combine(total_result_before, result)
+    
+    total_result_before.update_stats()
+    output_file.write("\n\n************************************\nTotal Result Before Transformation : \n************************************")
+    output_file.write("\n\n"+total_result_before.__str__(verbosity = 4))
     output_file.close()
 
 if __name__ == "__main__": main()
