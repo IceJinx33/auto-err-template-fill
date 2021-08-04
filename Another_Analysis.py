@@ -5,10 +5,13 @@ role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim
 error_names = [
         "Span_Error",
         "Spurious_Role_Filler",
+        "Duplicate_Role_Filler",
+        "Cross_Template_Spurious_Role_Filler",
+        "Incorrect_Role",
+        "Unrelated_Spurious_Role_Filler",
         "Missing_Role_Filler",
         "Spurious_Template",
         "Missing_Template",
-        "Incorrect_Role",
         "Incorrect_Incident_Type",
     ]
     
@@ -41,13 +44,18 @@ class Result:
         self.errors = {}
         for error_name in error_names: self.errors[error_name] = 0
 
+        self.spurious_rfs = []
+
     def __str__(self, verbosity = 4):
         result_string = "Result:"
         for k, v in self.stats.items():
             result_string += "\n" + k + ": " + str(v)
         result_string += "\nError Score: " + str(self.error_score)
         for k, v in self.errors.items():
-            result_string += "\n" + k + ": " + str(v)
+            if k in ["Duplicate_Role_Filler", "Cross_Template_Spurious_Role_Filler", "Incorrect_Role", "Unrelated_Spurious_Role_Filler"]:
+                result_string += "\n| |-" + k + ": " + str(v)
+            else:
+                result_string += "\n" + k + ": " + str(v)
         return result_string
 
     def update_stats(self):
@@ -78,6 +86,8 @@ class Result:
         for key in ["num", "p_den", "r_den"]:
             result.stats[key] = result1.stats[key] + result2.stats[key]
         result.error_score = result1.error_score + result2.error_score
+
+        result.spurious_rfs = result1.spurious_rfs + result2.spurious_rfs
 
         for error_name in error_names:
             result.errors[error_name] = result1.errors[error_name] + result2.errors[error_name]
@@ -155,10 +165,12 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
                         pairwise_result.error_score += 1
                         if mode in ["MUC_Errors", "Errors"]: pairwise_result.errors["Spurious_Template"] += 1
                     else:
-                        for _ in mentions:
+                        for pred_mention in mentions:
                             pairwise_result.stats["p_den"] += 1
                             pairwise_result.error_score += 1
-                            if mode in ["MUC_Errors", "Errors"]: pairwise_result.errors["Spurious_Role_Filler"] += 1
+                            if mode in ["MUC_Errors", "Errors"]: 
+                                pairwise_result.errors["Spurious_Role_Filler"] += 1
+                                pairwise_result.spurious_rfs.append((template_pair[0], role_name, pred_mention))
             else:
                 for role_name in role_names:
                     print(role_name)
@@ -184,7 +196,9 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
                                 elif mention_pair[1] is None:
                                     matching_result.stats["p_den"] += 1
                                     matching_result.error_score += 1
-                                    if mode in ["MUC_Errors", "Errors"]: matching_result.errors["Spurious_Role_Filler"] += 1
+                                    if mode in ["MUC_Errors", "Errors"]: 
+                                        matching_result.errors["Spurious_Role_Filler"] += 1
+                                        matching_result.spurious_rfs.append((template_pair[0], role_name, mention_pair[0]))
                                 else:
                                     matching_result.stats["num"] += int(mention_pair[2] == 0)
                                     matching_result.stats["p_den"] += 1
@@ -194,6 +208,7 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
                                     if mode in ["MUC_Errors", "Errors"] and mention_pair[2] == 1: 
                                         matching_result.errors["Missing_Role_Filler"] += 1
                                         matching_result.errors["Spurious_Role_Filler"] += 1
+                                        matching_result.spurious_rfs.append((template_pair[0], role_name, mention_pair[0]))
                             if matching_result.valid and (rolewise_result is None or matching_result > rolewise_result):
                                 rolewise_result = matching_result
                             print(matching_result)
@@ -203,10 +218,81 @@ def analyze(predicted_templates, gold_templates, mode = "MUC_Errors", scoring_mo
         return result
                     
     best_result = None
+    best_matching = None
     for template_matching in template_matches(predicted_templates, gold_templates):
         result = analyze_template_matching(template_matching)
-        if result.valid and (best_result is None or result > best_result): best_result = result
+        if result.valid and (best_result is None or result > best_result): 
+            best_result = result
+            best_matching = template_matching
+
+    def handle_spurious_rfs(best_result, best_matching):
+        
+        for pred_template, pred_role_name, pred_mention in best_result.spurious_rfs:
+ 
+            error_found = False
+            matched_gold_template = None
+
+            for template_pair in best_matching:
+                if template_pair[0] == pred_template:
+                    matched_gold_template = template_pair[1]
+                    for role_name in role_names:
+                        if (matched_gold_template != None and 
+                            pred_mention in [mention for corefs in matched_gold_template[role_name] for mention in corefs]):
+                            if role_name != pred_role_name:
+                                best_result.errors["Incorrect_Role"] += 1
+                                error_found = True
+                                break
+                            else:
+                                best_result.errors["Duplicate_Role_Filler"] += 1
+                                error_found = True
+                                break
+
+                    break
+
+            if error_found: continue
+            else:
+                
+                """
+                for role_name in role_names:
+                    for gold_template in gold_templates:
+
+                        if matched_gold_template != None and gold_template != matched_gold_template:
+                            for corefs in gold_template[role_name]:
+                                for mention in corefs:
+
+                                    if pred_mention == mention:
+                                        best_result.errors["Cross_Template_Spurious_Role_Filler"] += 1
+                                        if pred_role_name != role_name:
+                                            best_result.errors["Incorrect_Role"] += 1
+                                        error_found = True
+                                        break
+                                if error_found: break
+                        if error_found: break
+                    if error_found: break
+                """
+
+                for role_name in role_names:
+                    gold_mention_lst = []
+                    for gold_template in gold_templates:
+                        if matched_gold_template != None and gold_template != matched_gold_template:
+                            gold_mention_lst = [mention for corefs in gold_template[role_name] for mention in corefs]
+                    try:
+                        idx = gold_mention_lst.index(pred_mention)
+                        best_result.errors["Cross_Template_Spurious_Role_Filler"] += 1
+                        if pred_role_name != role_name:
+                            best_result.errors["Incorrect_Role"] += 1
+                        error_found = True
+                        break
+                    except:
+                        continue
+
+                if not error_found:
+                    best_result.errors["Unrelated_Spurious_Role_Filler"] += 1
+
+
+    handle_spurious_rfs(best_result, best_matching)
     best_result.compute()
+
     return best_result
 
 def from_file(input_file):
