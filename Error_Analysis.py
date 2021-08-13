@@ -1,540 +1,939 @@
-import copy
+import time
+
+start = time.time()
+
+import json, re, argparse, textwrap, copy
+from tqdm import tqdm
+import psutil, os
+
+def process_memory():
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    return mem_info.rss
+  
+# decorator function
+def profile(func):
+    def wrapper(*args, **kwargs):
+  
+        mem_before = process_memory()
+        result = func(*args, **kwargs)
+        mem_after = process_memory()
+        print("{}:consumed memory: {:,}".format(
+            func.__name__,
+            mem_before, mem_after, mem_after - mem_before))
+        return result
+    return wrapper
+
+#role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+role_names = ["Status", "Country", "Disease", "Victims"]
+
+error_names = [
+    "Span_Error",
+    "General_Spurious_Role_Filler",
+    "Duplicate_Role_Filler",
+    "Duplicate_Partially_Matched_Role_Filler",
+    "Within_Template_Incorrect_Role",
+    "Within_Template_Incorrect_Role + Partially_Matched_Filler",
+    "Wrong_Template_For_Role_Filler",
+    "Wrong_Template_For_Partially_Matched_Role_Filler",
+    "Wrong_Template + Wrong_Role",
+    "Wrong_Template + Wrong_Role + Partially_Matched_Filler",
+    "Spurious_Role_Filler",
+    "Missing_Role_Filler",
+    "Spurious_Template",
+    "Missing_Template"
+]
+
+transformation_names = [
+    "Alter_Span",
+    "Remove_Duplicate_Role_Filler",
+    "Remove_Cross_Template_Spurious_Role_Filler",
+    "Alter_Role",
+    "Remove_Unrelated_Spurious_Role_Filler",
+    "Introduce_Missing_Role_Filler",
+    "Remove_Spurious_Template",
+    "Introduce_Missing_Template"
+]
 
 
-def all_matchings(a, b):
-    """returns a list of all matchings, where each matching is a dictionary with keys "pairs," "unmatched_gold," "unmatched_predicted."
-    A matching is a set of pairs (i,j) where i in range(a), j is in range(b), unmatched_predicted is a subset of range(a),
-    unmatched_gold is a subset of range(b), every element of range(a) occurs exactly once in unmatched_predicted
-    or in the first position of a pair, and every element of range(b) occurs exactly once in unmatched_gold
-    or in the second position of a pair."""
-
-    matchings = [
-        {
-            "pairs": [],
-            "unmatched_gold": list(range(b)),
-            "unmatched_predicted": list(range(a)),
-        }
-    ]
-    for i in range(a):  # number of input indices paired
-        new_matchings = []
-        for matching in matchings:
-            for unmatched in matching["unmatched_gold"]:
-                new_matchings += [
-                    {
-                        "pairs": matching["pairs"] + [(i, unmatched)],
-                        "unmatched_gold": [
-                            item
-                            for item in matching["unmatched_gold"]
-                            if item != unmatched
-                        ],
-                        "unmatched_predicted": [
-                            item
-                            for item in matching["unmatched_predicted"]
-                            if item != i
-                        ],
-                    }
-                ]
-        matchings = matchings + new_matchings
-    return matchings
-
-
-def mention_tokens_index(doc, mention):
-    """
-    This function returns the starting and ending indexes of the tokenized mention
-    in the tokenized document text.
-    If the mention token list is not present (in order) in
-    the list of document tokens, this function
-    returns the start index as 1 and the end index as 0.
-    :param doc: List of document tokens
-    :type doc: List[strings]
-    :param mention: List of mention tokens
-    :type mention: List[strings]
-    """
-    start, end = -1, -1
-    if len(mention) == 0:
-        return 1, 0
-    for i in range(len(doc)):
-        if doc[i : i + len(mention)] == mention:
-            start = i
-            end = i + len(mention) - 1
-            break
-    if start == -1 and end == -1:
-        return 1, 0
-    return start, end
-
-
-def invert_dict(d):
-    # Credit https://stackoverflow.com/questions/35491223/inverting-a-dictionary-with-list-values
-    inverse = dict()
-    for key in d:
-        # Go through the list that is saved in the dict:
-        for item in d[key]:
-            # Check if in the inverted dict the key exists
-            if item not in inverse:
-                # If not create a new list
-                inverse[item] = [key]
-            else:
-                inverse[item].append(key)
-    return inverse
-
-
-def extract_span_diff(string1, diff, start):
-    """
-    This functions returns a string containing [diff] number of consecutive
-    alphanumeric characters from [string1] as well as any non-alphanumeric
-    characters it encounters while searching for alphanumeric characters. If
-    [start] = True, extraction starts from the beginning of the string, otherwise,
-    extraction begins at the end of the string.
-    :params string1: the input string
-    :type string1: string
-    :params diff: the number of alphanumeric characters to extract
-    :type diff: [diff] is an int > 0
-    :params start: whether extraction starts at the beginning ([start] = True)
-    or end of [string1] ([start] = False)
-    :type beg: [start] is an bool
-    """
-    if start == False:
-        string1 = string1[::-1]
-    d = 0
-    s = ""
-    for c in string1:
-        s += c
-        if c.isalnum():
-            d += 1
-        else:
+def summary_to_str(templates, mode):
+    result_string = "Summary:"
+    for template in templates:
+        if template is None:
+            result_string += " None"
             continue
-        if d == diff:
-            break
-    if start == False:
-        return s[::-1]
-    else:
-        return s
-
-
-def extract_span(predicted_mention, best_gold_mention):
-    # extracting missing/extra parts of the spans that cause span errors
-    # m - missing, e - extra
-    spans = []
-    if best_gold_mention != None:
-        diff_1 = predicted_mention.span[0] - best_gold_mention.span[0]
-        diff_2 = predicted_mention.span[1] - best_gold_mention.span[1]
-        docid_str = "Doc ID: " + predicted_mention.doc_id
-        if diff_1 > 0:
-            chars = extract_span_diff(best_gold_mention.literal, diff_1, True)
-            spans.append((docid_str, chars, "m"))
-        elif diff_1 < 0:
-            chars = extract_span_diff(predicted_mention.literal, -diff_1, True)
-            spans.append((docid_str, chars, "e"))
+        if mode == "MUC_Errors":
+            result_string += "\n|-Template (" + template["incident_type"] + "):"
         else:
-            pass
-        if diff_2 > 0:
-            chars = extract_span_diff(predicted_mention.literal, diff_2, False)
-            spans.append((docid_str, chars, "e"))
-        elif diff_2 < 0:
-            chars = extract_span_diff(best_gold_mention.literal, -diff_2, False)
-            spans.append((docid_str, chars, "m"))
-        else:
-            pass
-    return spans
-
-
-# A single mention
-class Mention:
-    def __init__(self, doc_id, span, literal, result_type):
-        self.doc_id = doc_id
-        self.span = span  # a pair of indices delimiting a string in the doc
-        self.literal = literal
-        self.result_type = result_type
-
-    @staticmethod
-    def compare(predicted_mention, gold_mentions, role_name):
-        assert (
-            predicted_mention is None
-            or gold_mentions is None
-            or predicted_mention.result_type == gold_mentions.result_type
-        ), "only mention with the same result type can be compared"
-
-        result = (
-            predicted_mention.result_type()
-            if predicted_mention is not None
-            else gold_mentions.result_type()
-        )
-
-        if gold_mentions is None:
-            result.update(
-                "Spurious_Role_Filler",
-                {"predicted_mention": predicted_mention, "role_name": role_name},
-            )
-            return result
-
-        if predicted_mention is None:
-            result.update(
-                "Missing_Role_Filler",
-                {"gold_mentions": gold_mentions, "role_name": role_name},
-            )
-            return result
-
-        result.update(
-            "Matched_Role_Filler",
-            {
-                "predicted_mention": predicted_mention,
-                "gold_mentions": gold_mentions,
-                "role_name": role_name,
-            },
-        )
-
-        return result
-
-    def from_doc(self):
-        # doc_tokens = docs[self.doc_id]  # global variable docs - tokenized documents
-        # start, end = self.span
-        # return ' '.join(doc_tokens[start:end + 1])
-        return self.literal
-
-    def __str__(self):
-        return str(self.span) + " - " + self.from_doc()
-
-
-# An entity in a gold template, with a list of coref mentions
-class Mentions:
-    def __init__(self, doc_id, mentions, result_type):
-        self.doc_id = doc_id
-        self.mentions = mentions  # a list of coref mentions
-        self.result_type = result_type
-        assert all(
-            mention.doc_id == self.doc_id for mention in mentions
-        ), "only mentions for the same doc can form a list"
-        assert all(
-            mention.result_type == self.result_type for mention in mentions
-        ), "only mentions with the same result type can form a list"
-
-    def __str__(self):
-        return "[" + ", ".join([str(mention) for mention in self.mentions]) + "]"
-
-    @staticmethod
-    def str_from_doc(role):
-        result = ""
-        for mention_or_mentions in role.mentions:
-            if isinstance(mention_or_mentions, Mention):
-                result += "("
-                mention = mention_or_mentions
-                result += mention.from_doc()
-                if mention != role.mentions[-1]:
-                    result += "), "
-                else:
-                    result += ")"
-            else:
-                result += "("
-                for mention in mention_or_mentions.mentions:
-                    result += mention.from_doc()
-                    if mention != mention_or_mentions.mentions[-1]:
-                        result += ", "
-                result += ")"
-        return result
-
-
-# The data associated with a field in a template
-class Role:
-    def __init__(self, doc_id, mentions, gold, result_type):
-        self.doc_id = doc_id
-        self.mentions = mentions  # a list of Mention (not Gold) or Mentions (gold)
-        self.gold = gold
-        self.result_type = result_type
-        assert all(
-            mention.doc_id == self.doc_id for mention in self.mentions
-        ), "mentions must be for the same doc as its role"
-        assert all(
-            mention.result_type == self.result_type for mention in self.mentions
-        ), "mentions must have the same result type as its role"
-
-    def __str__(self, outer=True):
-        return "[" + ", ".join([str(mention) for mention in self.mentions]) + "]"
-
-    @staticmethod
-    def compare(predicted_role, gold_role, role, verbose=False):
-        assert (
-            predicted_role is None
-            or gold_role is None
-            or predicted_role.result_type == gold_role.result_type
-        ), "only roles with the same result type can be compared"
-
-        empty_result = (
-            predicted_role.result_type()
-            if predicted_role is not None
-            else gold_role.result_type()
-        )
-
-        if gold_role is None:
-            result = empty_result
-            for mention in predicted_role.mentions:
-                result = predicted_role.result_type.combine(
-                    result, Mention.compare(mention, None, role)
-                )
-            return result
-
-        if predicted_role is None:
-            result = empty_result
-            for mentions in gold_role.mentions:
-                result = gold_role.result_type.combine(
-                    result, Mention.compare(None, mentions, role)
-                )
-            return result
-
-        best_result = None
-        for matching in all_matchings(
-            len(predicted_role.mentions), len(gold_role.mentions)
-        ):
-            result = Role.compare_matching(
-                matching, predicted_role, gold_role, role, verbose
-            )
-            if (best_result is None or result > best_result) and result.valid:
-                best_result = result
-        return best_result if best_result is not None else empty_result
-
-    @staticmethod
-    def compare_matching(matching, predicted_role, gold_role, role, verbose=False):
-        assert (
-            predicted_role is None
-            or gold_role is None
-            or predicted_role.result_type == gold_role.result_type
-        ), "only roles with the same result type can be compared"
-        result = (
-            predicted_role.result_type()
-            if predicted_role is not None
-            else gold_role.result_type()
-        )
-        for i, j in matching["pairs"]:
-            result = predicted_role.result_type.combine(
-                result,
-                Mention.compare(
-                    predicted_role.mentions[i], gold_role.mentions[j], role
-                ),
-            )
-        for i in matching["unmatched_predicted"]:
-            result = predicted_role.result_type.combine(
-                result, Mention.compare(predicted_role.mentions[i], None, role)
-            )
-        for i in matching["unmatched_gold"]:
-            result = predicted_role.result_type.combine(
-                result, Mention.compare(None, gold_role.mentions[i], role)
-            )
-        return result
-
-
-# A data structure containing structured information about an event in a document
-class Template:
-    def __init__(self, doc_id, roles, gold, result_type):
-        self.doc_id = doc_id
-        self.roles = roles  # a dictionary, indexed by strings, with Role values
-        self.gold = gold
-        self.result_type = result_type
-        assert all(
-            role.gold == self.gold for _, role in self.roles.items()
-        ), "roles must be in the same format as its template"
-        assert all(
-            role.doc_id == self.doc_id for _, role in self.roles.items()
-        ), "roles must be for the same doc as its template"
-        assert all(
-            role.result_type == self.result_type for _, role in self.roles.items()
-        ), "roles must have the same result type as its templates"
-
-    def __str__(self, outer=True):
-        re = (
-            "Template"
-            + ((" (gold)" if self.gold else " (predicted)") if outer else "")
-            + ":"
-        )
-        if outer:
-            re += "\n - Doc ID: " + str(self.doc_id)
-        for role_name, role in self.roles.items():
-            re += "\n - " + role_name + ": " + role.__str__(False)
-        return re
-
-    @staticmethod
-    def compare(predicted_template, gold_template, verbose=False):
-        assert (
-            predicted_template is not None or gold_template is not None
-        ), "cannot compare None to None"
-
-        if gold_template is None:
-            result = predicted_template.result_type()
-            result.update(
-                "Spurious_Template", {"predicted_template": predicted_template}
-            )
-            for role_name in predicted_template.roles:
-                comparison = Role.compare(
-                    predicted_template.roles[role_name],
-                    None,
-                    role_name,
-                    verbose,
-                )
-                result = predicted_template.result_type.combine(result, comparison)
-            return result
-
-        if predicted_template is None:
-            result = gold_template.result_type()
-            result.update("Missing_Template", {"gold_template": gold_template})
-            for role_name in gold_template.roles:
-                comparison = Role.compare(
-                    None,
-                    gold_template.roles[role_name],
-                    role_name,
-                    verbose,
-                )
-                result = gold_template.result_type.combine(result, comparison)
-            return result
-
-        assert (
-            predicted_template.result_type == gold_template.result_type
-        ), "only templates with the same result type can be compared"
-        assert (
-            predicted_template.roles.keys() == gold_template.roles.keys()
-        ), "only templates with the same roles can be compared"
-
-        result = predicted_template.result_type()
-        result.update(
-            "Matched_Template",
-            {"predicted_template": predicted_template, "gold_template": gold_template},
-        )
-        confusion_matrix = []
-        for role_name in predicted_template.roles:
-            confusion_row = []
-            diagonal_result = Role.compare(
-                    predicted_template.roles[role_name],
-                    gold_template.roles[role_name],
-                    role_name,
-                    verbose,
-                )
-            result = predicted_template.result_type.combine(result, diagonal_result)
-            for other_role_name in predicted_template.roles:
-                if other_role_name == role_name: 
-                    confusion_row.append(diagonal_result)
-                    continue
-                cross_result = Role.compare(
-                    predicted_template.roles[role_name],
-                    gold_template.roles[other_role_name],
-                    role_name,
-                    verbose,
-                )
-                confusion_row.append(cross_result)
-                if cross_result > diagonal_result:
-                    result.update("Incorrect_Role", {"role_pair": (role_name, other_role_name)})
-            confusion_matrix.append(confusion_row)
-        result.role_confusion_matrices.append(confusion_matrix)
-        return result
-
-
-# Represents a list of templates extracted from a single document
-class Summary:
-    def __init__(self, doc_id, templates, gold, result_type):
-        self.doc_id = doc_id
-        self.templates = templates  # a list of Template
-        self.gold = gold
-        self.result_type = result_type
-        assert all(
-            template.gold == self.gold for template in self.templates
-        ), "summary must be in the same format as its templates"
-        assert all(
-            template.doc_id == self.doc_id for template in self.templates
-        ), "summary must be for the same doc as its templates"
-        assert all(
-            template.result_type == self.result_type for template in self.templates
-        ), "summary must have the same result type as its templates"
-
-    def __str__(self, outer=True):
-        re = (
-            "Summary"
-            + ((" (gold)" if self.gold else " (predicted)") if outer else "")
-            + ":"
-        )
-        if outer:
-            re += "\n - Doc ID: " + str(self.doc_id)
-        for template in self.templates:
-            re += "\n" + template.__str__(False)
-        return re
-
-    @staticmethod
-    def compare(predicted_summary, gold_summary, verbose=False):
-        """returns a Result object representing the comparision
-        between Summaries [predicted_summary] and [gold_summary]"""
-        assert (
-            predicted_summary is not None or gold_summary is not None
-        ), "cannot compare None to None"
-        assert (
-            predicted_summary is None
-            or gold_summary is None
-            or predicted_summary.result_type == gold_summary.result_type
-        ), "only summaries with the same result type can be compared"
-
-        best_result = None
-        for matching in all_matchings(
-            len(predicted_summary.templates), len(gold_summary.templates)
-        ):
-            result = Summary.compare_matching(
-                matching, predicted_summary, gold_summary, verbose
-            )
-            if (best_result is None or result > best_result) and result.valid:
-                best_result = result
-        return (
-            best_result
-            if best_result is not None
-            else (
-                predicted_summary.result_type()
-                if predicted_summary is not None
-                else gold_summary.result_type()
-            )
-        )
-
-    @staticmethod
-    def compare_matching(matching, predicted_summary, gold_summary, verbose=False):
-        assert (
-            predicted_summary is not None or gold_summary is not None
-        ), "cannot compare None to None"
-        assert (
-            predicted_summary is None
-            or gold_summary is None
-            or predicted_summary.result_type == gold_summary.result_type
-        ), "only summaries with the same result type can be compared"
-
-        result = (
-            predicted_summary.result_type()
-            if predicted_summary is not None
-            else gold_summary.result_type()
-        )
-        for i, j in matching["pairs"]:
-            pair_result = Template.compare(
-                predicted_summary.templates[i], gold_summary.templates[j], verbose
-            )
-            result = predicted_summary.result_type.combine(result, pair_result)
-        for i in matching["unmatched_predicted"]:
-            result = predicted_summary.result_type.combine(
-                result, Template.compare(predicted_summary.templates[i], None)
-            )
-        for i in matching["unmatched_gold"]:
-            result = predicted_summary.result_type.combine(
-                result, Template.compare(None, gold_summary.templates[i])
-            )
-        return result
+            result_string += "\n|-Template:"
+        for k, v in template.items():
+            if mode == "MUC_Errors" and k == "incident_type":
+                continue
+            result_string += "\n| |-" + k + ": " + ", ".join([str(i) for i in v])
+    return result_string
 
 
 class Result:
-    """An object representing all data associated with a part or all
-    of the difference between some predicted data and some gold data."""
-
     def __init__(self):
-        pass
+        self.valid = True
 
-    def __str__(self):
-        pass
+        self.stats = {}
+        for key in role_names + ["total"]:
+            self.stats[key] = {"num": 0, "p_den": 0, "r_den": 0, "p": 0, "r": 0, "f1": 0}
+
+        self.error_score = 0
+
+        self.errors = {}
+        for error_name in error_names:
+            self.errors[error_name] = 0
+
+        self.spurious_rfs = []
+        self.missing_rfs = []
+        self.transformations = []
+        self.transformed_data = []
+
+    def __str__(self, verbosity=4):
+        
+        result_string = ""
+        pair_count = 0
+        if verbosity == 2 or verbosity == 4:
+            result_string += "Transformations:"
+            for trans in self.transformations:
+                if trans == "\n":
+                    result_string += "\n\n"
+                    pair_count += 1
+                    result_string += "Template Pair " + str(pair_count) + ":"
+                elif trans[2][0] == "Alter_Role":
+                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                    result_string += "\n  From " + trans[0] + ": " + str(trans[1]) + " to " + trans[3] + ": " + str(trans[1]) 
+                    if len(trans[2]) != 1:
+                        result_string += " to None"
+                else:
+                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                    result_string += "\n  " + str(trans[0]) + ": From " + str(trans[1]) + " to " + str(trans[3])
+            if verbosity == 4: result_string += "\n\n"
+
+        if verbosity == 3 or verbosity == 4:
+            result_string += "Result:\n"
+
+            for key in ["total"] + role_names:
+                result_string += key + ": Precision : {1:.4f}, Recall : {2:.4f}, F1 : {0:.4f}\n".format(self.stats[key]["f1"],
+                                                                                     self.stats[key]["p"],
+                                                                                     self.stats[key]["r"])
+
+            result_string += "\nError Score: " + str(self.error_score)
+            for k, v in self.errors.items():
+                if k in [
+                    "Duplicate_Role_Filler",
+                    "Duplicate_Partially_Matched_Role_Filler",
+                    "Within_Template_Incorrect_Role",
+                    "Within_Template_Incorrect_Role + Partially_Matched_Filler",
+                    "Wrong_Template_For_Role_Filler",
+                    "Wrong_Template_For_Partially_Matched_Role_Filler",
+                    "Wrong_Template + Wrong_Role",
+                    "Wrong_Template + Wrong_Role + Partially_Matched_Filler",
+                    "Spurious_Role_Filler"
+                ]:
+                    result_string += "\n| |-" + k + ": " + str(v)
+                else:
+                    result_string += "\n" + k + ": " + str(v)
+        
+        return result_string
+
+    def update_stats(self):
+        def compute_scores(num, p_den, r_den, beta=1):
+            p = 0 if p_den == 0 else num / float(p_den)
+            r = 0 if r_den == 0 else num / float(r_den)
+            d = beta * beta * p + r
+            f1 = 0 if d == 0 else (1 + beta * beta) * p * r / d
+            return (p, r, f1)
+
+        for key, role in self.stats.items():
+            self.stats[key]["p"], self.stats[key]["r"], self.stats[key]["f1"] = compute_scores(role["num"], role["p_den"],
+                                                                     role["r_den"])
+
+        return
 
     def __gt__(self, other):
-        pass
+        if not other.valid:
+            return True
+        self.update_stats()
+        other.update_stats()
+        if self.stats["total"]["f1"] != other.stats["total"]["f1"]:
+            return self.stats["total"]["f1"] > other.stats["total"]["f1"]
+        return self.error_score < other.error_score
 
-    @staticmethod
     def combine(result1, result2):
-        """returns a Result representing the simultaneous occurrence of [result1] and [result2]"""
-        pass
+        result = Result()
+        result.valid = result1.valid and result2.valid
 
-    def update(self, comparison_event):
-        """updates [self] to include a [comparision_event]"""
-        pass
+        for key in result.stats.keys():
+            for stat in ["num", "p_den", "r_den"]:
+                result.stats[key][stat] = result1.stats[key][stat] + result2.stats[key][stat]
+
+        result.error_score = result1.error_score + result2.error_score
+
+        result.spurious_rfs = result1.spurious_rfs + result2.spurious_rfs
+        result.missing_rfs = result1.missing_rfs + result2.missing_rfs
+
+        result.transformations = result1.transformations + result2.transformations
+
+        result.transformed_data = result1.transformed_data + result2.transformed_data
+
+        for error_name in error_names:
+            result.errors[error_name] = (
+                result1.errors[error_name] + result2.errors[error_name]
+            )
+
+        return result
+
+    def compute(self, template_matching, docid):
+
+        """Generate the transformed templates for this matching"""
+
+        pair_count = -1
+        pred_templates = [None]*len(template_matching)
+        org_pred_templates = [pair[0] for pair in template_matching]
+        gold_templates = [pair[1] for pair in template_matching]
+
+        hand_sprfs = {}
+        for template, _, mention in self.spurious_rfs:
+            if str(template) in hand_sprfs:
+                hand_sprfs[str(template)].append(mention)
+            else:
+                hand_sprfs[str(template)] = [(mention)]
+
+        hand_mprfs = {}
+        for template, role_name, corefs in self.missing_rfs:
+            if str(template) in hand_mprfs:
+                if role_name in hand_mprfs[str(template)]:
+                    hand_mprfs[str(template)][role_name] += [mention for mention in corefs]
+                else:
+                    hand_mprfs[str(template)][role_name] = [mention for mention in corefs]
+            else:
+                hand_mprfs[str(template)] = {}
+                hand_mprfs[str(template)][role_name] = [mention for mention in corefs]
+
+        for trans in self.transformations:
+            
+            if trans == "\n":
+                pair_count += 1
+                if pred_templates[pair_count] == None:
+                    pred_templates[pair_count] = copy.deepcopy(org_pred_templates[pair_count])
+            elif trans[2] == ["Alter_Span"] and pred_templates[pair_count] != None:
+                idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                if trans[3] in pred_templates[pair_count][trans[0]]:
+                    pred_templates[pair_count][trans[0]].pop(idx)
+                    continue
+                else:
+                    pred_templates[pair_count][trans[0]][idx] = trans[3]
+            elif trans[2] == ["Remove_Duplicate_Role_Filler"] :
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+            elif trans[2] == ["Alter_Role"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+                    
+                    if trans[1] in pred_templates[pair_count][trans[3]] or trans[1] in hand_sprfs[str(org_pred_templates[pair_count])]:
+                        continue
+                    else:
+                        pred_templates[pair_count][trans[3]].append(trans[1])
+            elif trans[2] == ["Remove_Cross_Template_Spurious_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+
+                    temp_idx = gold_templates.index(trans[4])
+                    if pred_templates[temp_idx] == None:
+                        pred_templates[temp_idx] = copy.deepcopy(org_pred_templates[temp_idx])
+                    
+                    if org_pred_templates[temp_idx] != None and pred_templates[temp_idx] != "Removed":
+                        if (trans[1] in pred_templates[temp_idx][trans[0]]):
+                            continue
+                        else:
+                            try:
+                                if trans[1] in hand_mprfs[str(org_pred_templates[temp_idx])][trans[0]] and trans[1] not in hand_sprfs[str(org_pred_templates[temp_idx])]:
+                                    pred_templates[temp_idx][trans[0]].append(trans[1])
+                            except:
+                                continue
+
+            elif trans[2] == ["Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+                    temp_idx = gold_templates.index(trans[4])
+                    if pred_templates[temp_idx] == None:
+                        pred_templates[temp_idx] = copy.deepcopy(org_pred_templates[temp_idx])
+                    if org_pred_templates[temp_idx] != None and pred_templates[temp_idx] != "Removed":
+                        if trans[1] in pred_templates[temp_idx][trans[3]]:
+                            continue
+                        else:
+                            try:
+                                if trans[1] in hand_mprfs[str(org_pred_templates[temp_idx])][trans[3]] and trans[1] not in hand_sprfs[str(org_pred_templates[temp_idx])]:
+                                    pred_templates[temp_idx][trans[3]].append(trans[1])
+                            except:
+                                continue
+                        
+            elif trans[2] == ["Remove_Unrelated_Spurious_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+            elif trans[2] == ["Introduce_Missing_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    if trans[3] in pred_templates[pair_count][trans[0]]:
+                        continue
+                    else:
+                        pred_templates[pair_count][trans[0]].append(trans[3])
+            elif trans[2] == ["Remove_Spurious_Template"]:
+                pred_templates[pair_count] = "Removed"
+            elif trans[2] == ["Introduce_Missing_Template"]:
+                pred_templates[pair_count] = {}
+                for role_key in trans[3]:
+                    pred_templates[pair_count][role_key] = []
+                    if trans[3][role_key] == []:
+                        continue
+                    elif type(trans[3][role_key]) != list:
+                        pred_templates[pair_count][role_key] = trans[3][role_key]
+                    else:
+                        for coref in trans[3][role_key]:
+                            pred_templates[pair_count][role_key].append(coref[0])
+                            
+            else:
+                raise Exception("Incorrect transformation type")
+        
+        proc_pred_templates = [temp for temp in pred_templates if not(temp == None or temp == "Removed")]
+        proc_gold_templates = [temp for temp in gold_templates if not(temp == None or temp == "Removed")] 
+        self.transformed_data = [(docid, (proc_pred_templates, proc_gold_templates))]
+        
+
+# Modes: "MUC", "MUC_Errors", "Errors"
+def analyze(
+    docid,
+    predicted_templates,
+    gold_templates,
+    mode="MUC_Errors",
+    scoring_mode="All_Templates",
+    verbose=False
+):
+    def template_matches(predicted_templates, gold_templates):
+        if len(predicted_templates) == 0:
+            yield [(None, gold_template) for gold_template in gold_templates]
+        else:
+            for matching in template_matches(predicted_templates[1:], gold_templates):
+                yield [(predicted_templates[0], None)] + matching
+            for i in range(len(gold_templates)):
+                if mode == "Errors" or (
+                    predicted_templates[0]["incident_type"]
+                    == gold_templates[i]["incident_type"]
+                ):
+                    for matching in template_matches(
+                        predicted_templates[1:],
+                        gold_templates[:i] + gold_templates[i + 1 :],
+                    ):
+                        yield [(predicted_templates[0], gold_templates[i])] + matching
+
+    def analyze_template_matching(template_matching):
+        def mention_matches(predicted_mentions, gold_mentions):
+            if len(predicted_mentions) == 0:
+                yield [(None, gold_mention) for gold_mention in gold_mentions]
+            else:
+                for matching in mention_matches(predicted_mentions[1:], gold_mentions):
+                    yield [(predicted_mentions[0], None)] + matching
+                for i in range(len(gold_mentions)):
+                    best_score = 1
+                    best_gold_mention = None
+                    for mention in gold_mentions[i]:
+                        span = mention[0]
+                        score = span_scorer(predicted_mentions[0][0], span)
+                        if score < best_score:
+                            best_score = score
+                            best_gold_mention = mention
+                    if best_score == 1:
+                        continue
+                    for matching in mention_matches(
+                        predicted_mentions[1:],
+                        gold_mentions[:i] + gold_mentions[i + 1 :],
+                    ):
+                        yield [
+                            (predicted_mentions[0], gold_mentions[i], best_score, best_gold_mention)
+                        ] + matching
+
+        def span_scorer(span1, span2, span_mode="geometric_mean"):
+            # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
+            if span1 == span2:
+                return 0
+            length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
+            if span_mode == "absolute":
+                val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
+                    length1 + length2
+                )
+                return min(val, 1.0)
+            elif span_mode == "geometric_mean":
+                intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
+                return 1 - (
+                    ((intersection ** 2) / (length1 * length2))
+                    if length1 * length2 > 0
+                    else 0
+                )
+
+        result = Result()
+        for template_pair in template_matching:
+            pairwise_result = Result()
+            pairwise_result.transformations.append("\n")
+            if template_pair[0] is None and scoring_mode in [
+                "All_Templates",
+                "Matched/Missing",
+            ]:
+                if mode in ["MUC_Errors", "Errors"]:
+                    pairwise_result.errors["Missing_Template"] += 1
+                    pairwise_result.transformations.append(("", None, ["Introduce_Missing_Template"], template_pair[1]))
+                for role_name, mentions in template_pair[1].items():
+                    if mode == "MUC_Errors" and role_name == "incident_type":
+                        pairwise_result.stats[role_name]["r_den"] += 1
+                        pairwise_result.stats["total"]["r_den"] += 1
+                        pairwise_result.error_score += 1
+                    else:
+                        for gold_mention in mentions:
+                            pairwise_result.stats[role_name]["r_den"] += 1
+                            pairwise_result.stats["total"]["r_den"] += 1
+                            pairwise_result.error_score += 1
+                            if mode in ["MUC_Errors", "Errors"]:
+                                continue
+                                pairwise_result.errors["Missing_Role_Filler"] += 1
+                                pairwise_result.transformations.append((role_name, None, ["Introduce_Missing_Role_Filler"], gold_mention[0]))
+                                pairwise_result.missing_rfs.append(
+                                            (
+                                                template_pair[0],
+                                                role_name,
+                                                gold_mention
+                                            )
+                                        )
+
+            elif template_pair[1] is None and scoring_mode in [
+                "All_Templates",
+                "Matched/Spurious",
+            ]:
+                if mode in ["MUC_Errors", "Errors"]:
+                    pairwise_result.errors["Spurious_Template"] += 1
+                    pairwise_result.transformations.append(("", template_pair[0], ["Remove_Spurious_Template"], None))
+                for role_name, mentions in template_pair[0].items():
+                    if mode == "MUC_Errors" and role_name == "incident_type":
+                        pairwise_result.stats[role_name]["p_den"] += 1
+                        pairwise_result.stats["total"]["p_den"] += 1
+                        pairwise_result.error_score += 1
+                    else:
+                        for pred_mention in mentions:
+                            pairwise_result.stats[role_name]["p_den"] += 1
+                            pairwise_result.stats["total"]["p_den"] += 1
+                            pairwise_result.error_score += 1
+                            continue
+                            if mode in ["MUC_Errors", "Errors"]:
+                                pairwise_result.errors["Spurious_Role_Filler"] += 1
+                                pairwise_result.spurious_rfs.append(
+                                    (template_pair[0], role_name, pred_mention)
+                                )
+                            pairwise_result.transformations.append(("", "", ["Remove_Spurious_Role_Filler"], ""))    
+            else:
+                for role_name in role_names:
+                    
+                    rolewise_result = Result()
+                    if mode == "MUC_Errors" and role_name == "incident_type":
+                        match = (
+                            template_pair[0][role_name] == template_pair[1][role_name]
+                        )
+                        if mode in ["MUC", "MUC_Errors"]:
+                            assert match, "incompatible matching"
+                        rolewise_result.stats[role_name]["num"] += int(match)
+                        rolewise_result.stats[role_name]["p_den"] += 1
+                        rolewise_result.stats[role_name]["r_den"] += 1
+
+                        rolewise_result.stats["total"]["num"] += int(match)
+                        rolewise_result.stats["total"]["p_den"] += 1
+                        rolewise_result.stats["total"]["r_den"] += 1
+                        rolewise_result.error_score += int(not match)
+
+                        #if mode in ["MUC_Errors", "Errors"] and not match:
+                            #rolewise_result.errors["Incorrect_Incident_Type"] += 1
+                    else:
+                        rolewise_result = None
+                        for mention_matching in mention_matches(
+                            template_pair[0][role_name], template_pair[1][role_name]
+                        ):
+                            
+                            matching_result = Result()
+                            for mention_pair in mention_matching:
+                                if mention_pair[0] is None:
+                                    matching_result.stats[role_name]["r_den"] += 1
+                                    matching_result.stats["total"]["r_den"] += 1
+                                    matching_result.error_score += 1
+                                    if mode in ["MUC_Errors", "Errors"]:
+                                        matching_result.errors[
+                                            "Missing_Role_Filler"
+                                        ] += 1
+                                        matching_result.transformations.append((role_name, None, ["Introduce_Missing_Role_Filler"], mention_pair[1][0]))
+                                        matching_result.missing_rfs.append(
+                                            (
+                                                template_pair[0],
+                                                role_name,
+                                                mention_pair[1]
+                                            )
+                                        )
+
+                                elif mention_pair[1] is None:
+                                    matching_result.stats[role_name]["p_den"] += 1
+                                    matching_result.stats["total"]["p_den"] += 1
+                                    matching_result.error_score += 1
+                                    if mode in ["MUC_Errors", "Errors"]:
+                                        matching_result.errors[
+                                            "General_Spurious_Role_Filler"
+                                        ] += 1
+                                        matching_result.spurious_rfs.append(
+                                            (
+                                                template_pair[0],
+                                                role_name,
+                                                mention_pair[0],
+                                            )
+                                        )
+                                        matching_result.transformations.append(("", "", ["Remove_Spurious_Role_Filler"], ""))
+                                else:
+                                    matching_result.stats[role_name]["num"] += int(
+                                        mention_pair[2] == 0
+                                    )
+                                    matching_result.stats[role_name]["p_den"] += 1
+                                    matching_result.stats[role_name]["r_den"] += 1
+
+                                    matching_result.stats["total"]["num"] += int(
+                                        mention_pair[2] == 0
+                                    )
+                                    matching_result.stats["total"]["p_den"] += 1
+                                    matching_result.stats["total"]["r_den"] += 1
+
+                                    matching_result.error_score += mention_pair[2]
+                                    if (
+                                        mode in ["MUC_Errors", "Errors"]
+                                        and 0 < mention_pair[2] < 1
+                                    ):
+                                        matching_result.errors["Span_Error"] += 1
+                                        matching_result.transformations.append((role_name, mention_pair[0], ["Alter_Span"], mention_pair[3]))
+                                        
+                                    if (
+                                        mode in ["MUC_Errors", "Errors"]
+                                        and mention_pair[2] == 1
+                                    ):
+                                        matching_result.errors[
+                                            "Missing_Role_Filler"
+                                        ] += 1
+                                        matching_result.transformations.append((role_name, mention_pair[0], ["Introduce_Missing_Role_Filler"], mention_pair[1][0]))
+                                        matching_result.missing_rfs.append(
+                                            (
+                                                template_pair[0],
+                                                role_name,
+                                                mention_pair[1]
+                                            )
+                                        )
+
+                                        matching_result.errors[
+                                            "General_Spurious_Role_Filler"
+                                        ] += 1
+                                        matching_result.spurious_rfs.append(
+                                            (
+                                                template_pair[0],
+                                                role_name,
+                                                mention_pair[0],
+                                            )
+                                        )
+                                        matching_result.transformations.append(("", "", ["Remove_Spurious_Role_Filler"], ""))
+                            if matching_result.valid and (
+                                rolewise_result is None
+                                or matching_result > rolewise_result
+                            ):
+                                rolewise_result = matching_result
+                            
+                    pairwise_result = Result.combine(pairwise_result, rolewise_result)
+            result = Result.combine(result, pairwise_result)
+        
+        return result
+
+    best_result = None
+    best_matching = None
+    for template_matching in template_matches(predicted_templates, gold_templates):
+        result = analyze_template_matching(template_matching)
+        if result.valid and (best_result is None or result > best_result):
+            best_result = result
+            best_matching = template_matching
+
+    def handle_spurious_rfs(best_result, best_matching):
+
+        for pred_template, pred_role_name, pred_mention in best_result.spurious_rfs:
+
+            transform_idx = best_result.transformations.index(("", "", ["Remove_Spurious_Role_Filler"], ""))
+
+            error_found = False
+            matched_gold_template = None
+
+            for template_pair in best_matching:
+                if template_pair[0] == pred_template:
+                    matched_gold_template = template_pair[1]
+                    for role_name in role_names:
+                        if matched_gold_template != None and pred_mention in [
+                            mention
+                            for corefs in matched_gold_template[role_name]
+                            for mention in corefs
+                        ]:
+                            if role_name != pred_role_name:
+                                best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role"], role_name)
+                                best_result.errors["Within_Template_Incorrect_Role"] += 1
+                                error_found = True
+                                break
+                            else:
+                                best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Duplicate_Role_Filler"], None)
+                                best_result.errors["Duplicate_Role_Filler"] += 1
+                                error_found = True
+                                break
+
+                    break
+
+            if error_found:
+                continue
+            else:
+
+                for role_name in role_names:
+                    gold_mention_lst = []
+                    gold_template_idxs = []
+                    i = 0
+                    for gold_template in gold_templates:
+                        if (
+                            matched_gold_template != None
+                            and gold_template != matched_gold_template
+                        ):
+                            temp_lst = [
+                                mention
+                                for corefs in gold_template[role_name]
+                                for mention in corefs
+                            ]
+                            gold_mention_lst += temp_lst
+                            gold_template_idxs += [i]*len(temp_lst)
+                        i += 1
+                    try:
+                        idx = gold_mention_lst.index(pred_mention)
+                        gold_idx = gold_template_idxs[idx]
+                        if pred_role_name != role_name:
+                            best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"], role_name, gold_templates[gold_idx])
+                            best_result.errors["Wrong_Template + Wrong_Role"] += 1
+                        else:
+                            best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Cross_Template_Spurious_Role_Filler"], None, gold_templates[gold_idx])
+                            best_result.errors["Wrong_Template_For_Role_Filler"] += 1
+                        error_found = True
+                        break
+                    except:
+                        continue
+
+                if not error_found:
+                    best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Unrelated_Spurious_Role_Filler"], None)
+                    best_result.errors["Spurious_Role_Filler"] += 1
+
+    handle_spurious_rfs(best_result, best_matching)
+    best_result.compute(best_matching, docid)
+
+    return best_result, best_matching
+
+
+def from_file(input_file, mode):
+    """
+    This function returns the data structure and tokenized documents
+    for error analysis given the input file [input_file].
+    The data structure is a List of tuples, each tuple containing 2 Summary
+    objects for a document, the first Summary object contains the predicted
+    templates, the second contains the gold templates.
+    The tokenized documents consists of a dictionary with keys as doc ids
+    and respective tokenized documents as values.
+    :params input_file: valid path to input file
+    :type input_file: string
+    """
+
+    def normalize_string(s):
+        """Lower text and remove punctuation, articles and extra whitespace."""
+        regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
+        s = re.sub(regex, " ", s.lower())
+        return " ".join([c for c in s if c.isalnum()])
+
+    def mention_tokens_index(doc, mention):
+        """
+        This function returns the starting and ending indexes of the tokenized mention
+        in the tokenized document text.
+        If the mention token list is not present (in order) in
+        the list of document tokens, this function
+        returns the start index as 1 and the end index as 0.
+        :param doc: List of document tokens
+        :type doc: List[strings]
+        :param mention: List of mention tokens
+        :type mention: List[strings]
+        """
+        start, end = -1, -1
+        if len(mention) == 0:
+            return 1, 0
+        for i in range(len(doc)):
+            if doc[i : i + len(mention)] == mention:
+                start = i
+                end = i + len(mention) - 1
+                break
+        if start == -1 and end == -1:
+            return 1, 0
+        return start, end
+
+    data = []
+    documents = {}
+
+    with open(input_file, encoding="utf-8") as f:
+        inp_dict = json.load(f)
+
+    for docid, example in inp_dict.items():
+        pred_templates = []
+        gold_templates = []
+
+        doc_tokens = normalize_string(example["doctext"].replace(" ##", "")).split()
+        documents[docid] = doc_tokens
+
+        for pred_temp in example["pred_templates"]:
+            roles = {}
+            for role_name, role_data in pred_temp.items():
+                if mode == "MUC_Errors" and role_name == "incident_type":
+                    roles[role_name] = role_data
+                    continue
+                if mode == "Errors" and type(role_data) != list:
+                    try:
+                        rdata_tokens = normalize_string(str(role_data))
+                        span = mention_tokens_index(doc_tokens, rdata_tokens)
+                        roles[role_name] = [(span, str(role_data))]
+                    except:
+                        raise Exception(
+                            "The datatype associated with the role "
+                            + str(role_name)
+                            + " could not be converted to a string."
+                        )
+                    continue
+                mentions = []
+                for entity in role_data:
+                    for mention in entity:
+                        mention_tokens = normalize_string(mention).split()
+                        span = mention_tokens_index(doc_tokens, mention_tokens)
+                        mentions.append((span, mention))
+                roles[role_name] = mentions
+            pred_templates.append(roles)
+
+        for gold_temp in example["gold_templates"]:
+            roles = {}
+            for role_name, role_data in gold_temp.items():
+                if role_name == "incident_type":
+                    roles[role_name] = role_data
+                    continue
+                if mode == "Errors" and type(role_data) != list:
+                    try:
+                        rdata_tokens = normalize_string(str(role_data))
+                        span = mention_tokens_index(doc_tokens, rdata_tokens)
+                        roles[role_name] = [[(span, str(role_data))]]
+                    except:
+                        raise Exception(
+                            "The datatype associated with the role "
+                            + str(role_name)
+                            + " could not be converted to a string."
+                        )
+                    continue
+                coref_mentions = []
+                for entity in role_data:
+                    mentions = []
+                    for mention in entity:
+                        mention_tokens = normalize_string(mention).split()
+                        span = mention_tokens_index(doc_tokens, mention_tokens)
+                        mentions.append((span, mention))
+                    coref_mentions.append(mentions)
+                roles[role_name] = coref_mentions
+            gold_templates.append(roles)
+
+        data.append((docid, (pred_templates, gold_templates)))
+
+    return data, documents
+
+# instantiation of decorator function
+@profile
+def main():
+    def add_script_args(parser):
+        parser.add_argument(
+            "-i",
+            "--input_file",
+            type=str,
+            help="The path to the input file given to the system",
+        )
+        parser.add_argument(
+            "-v", "--verbose", action="store_true", help="Increase output verbosity"
+        )
+        parser.add_argument(
+            "-at",
+            "--analyze_transformed",
+            action="store_true",
+            help="Analyze transformed data",
+        )
+        parser.add_argument(
+            "-s",
+            "--scoring_mode",
+            type=str,
+            choices=["all", "msp", "mmi", "mat"],
+            help=textwrap.dedent(
+                """\
+                            Choose scoring mode according to MUC:
+                            all - All Templates
+                            msp - Matched/Spurious
+                            mmi - Matched/Missing
+                            mat - Matched Only
+                        """
+            ),
+            default="All_Templates",
+        )
+
+        parser.add_argument(
+            "-m",
+            "--mode",
+            type=str,
+            choices=["MUC_Errors", "Errors"],
+            help=textwrap.dedent(
+                """\
+                            Choose evaluation mode:
+                            MUC_Errors - MUC evaluation with added constraint of incident_types of templates needing to match
+                            Errors - General evaluation with no added constraints
+                        """
+            ),
+            default="All_Templates",
+        )
+
+        parser.add_argument(
+            "-o",
+            "--output_file",
+            type=str,
+            help="The path to the output file the system writes to",
+        )
+        return parser
+
+    parser = add_script_args(
+        argparse.ArgumentParser(
+            usage='Use "python MUC_Error_Analysis_Operation.py --help" for more information',
+            formatter_class=argparse.RawTextHelpFormatter,
+        )
+    )
+    args = parser.parse_args()
+
+    input_file = args.input_file
+    verbose = args.verbose
+    analyze_transformed = args.analyze_transformed
+
+    if args.mode == "MUC_Errors":
+        mode = args.mode
+    else:
+        mode = "Errors"
+
+    output_file = open(args.output_file, "w")
+
+    if args.scoring_mode == "all":
+        output_file.write("Using scoring mode - All Templates\n")
+        scoring_mode = "All_Templates"
+    elif args.scoring_mode == "msp":
+        output_file.write("Using scoring mode - Matched/Spurious\n")
+        scoring_mode = "Matched/Spurious"
+    elif args.scoring_mode == "mmi":
+        output_file.write("Using scoring mode - Matched/Missing\n")
+        scoring_mode = "Matched/Missing"
+    elif args.scoring_mode == "mat":
+        output_file.write("Using scoring mode - Matched Only\n")
+        scoring_mode = "Matched_Only"
+    else:
+        output_file.write("Using default scoring mode - All Templates\n")
+        scoring_mode = "All_Templates"
+
+    data, docs = from_file(input_file, mode)
+
+    transformed_data = []
+
+    output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...")
+
+    total_result_before = Result()
+
+    for docid, pair in tqdm(data, desc="Analyzing Data and Applying Transformations: "):
+        output_file.write("\n\n\t------------------\n\n")
+        output_file.write("DOCID: " + str(docid) + "\n\n")
+        output_file.write("Comparing:")
+        output_file.write(
+            "\n"
+            + summary_to_str(pair[0], mode)
+            + "\n -to- \n"
+            + summary_to_str(pair[1], mode)
+        )
+        result, matching = analyze(docid, *pair, mode, scoring_mode, verbose)
+
+        for idx, template_pair in enumerate(matching):
+            output_file.write("\n\n\t---\n\n")
+            output_file.write("Template Pair " + str(idx + 1) + ": \nMatching:")
+            str_t_0 = summary_to_str([template_pair[0]], mode)[11: ] if template_pair[0] != None else summary_to_str([template_pair[0]], mode)[9: ]
+            str_t_1 = summary_to_str([template_pair[1]], mode)[11: ] if template_pair[1] != None else summary_to_str([template_pair[1]], mode)[9: ]
+            output_file.write(
+                "\n"
+                + str_t_0
+                + "\n -to- \n"
+                + str_t_1
+        )
+
+        output_file.write("\n\n" + result.__str__(verbosity=2))
+        total_result_before = Result.combine(total_result_before, result)
+
+    total_result_before.update_stats()
+    output_file.write(
+        "\n\n************************************\nTotal Result Before Transformation : \n************************************"
+    )
+    output_file.write("\n\n" + total_result_before.__str__(verbosity=3))
+
+    if analyze_transformed:
+        output_file.write("\n\nANALYZING TRANSFORMED DATA ...")
+
+        total_result_after = Result()
+
+        for docid, pair in tqdm(total_result_before.transformed_data, desc="Analyzing Transformed Data: "):
+            output_file.write("\n\n\t------------------\n\n")
+            output_file.write("DOCID: " + str(docid) + "\n\n")
+            output_file.write("Comparing:")
+            output_file.write(
+                "\n"
+                + summary_to_str(pair[0], mode)
+                + "\n -to- \n"
+                + summary_to_str(pair[1], mode)
+            )
+            result, matching = analyze(docid, *pair, mode, scoring_mode, verbose)
+
+            for idx, template_pair in enumerate(matching):
+                output_file.write("\n\n\t---\n\n")
+                output_file.write("Template Pair " + str(idx + 1) + ": \nMatching:")
+                str_t_0 = summary_to_str([template_pair[0]], mode)[11: ] if template_pair[0] != None else summary_to_str([template_pair[0]], mode)[9: ]
+                str_t_1 = summary_to_str([template_pair[1]], mode)[11: ] if template_pair[1] != None else summary_to_str([template_pair[1]], mode)[9: ]
+                output_file.write(
+                    "\n"
+                    + str_t_0
+                    + "\n -to- \n"
+                    + str_t_1
+            )
+
+            output_file.write("\n\n" + result.__str__(verbosity=2))
+            total_result_after = Result.combine(total_result_after, result)
+
+        total_result_after.update_stats()
+        output_file.write(
+            "\n\n************************************\nTotal Result After Transformation : \n************************************"
+        )
+        output_file.write("\n\n" + total_result_after.__str__(verbosity=3))
+
+    output_file.close()
+    print("Time: " + str(time.time() - start))
+
+
+
+
+if __name__ == "__main__":
+    main()
