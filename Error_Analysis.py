@@ -24,8 +24,14 @@ def profile(func):
         return result
     return wrapper
 
-#role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
-role_names = ["Status", "Country", "Disease", "Victims"]
+# MUC - MUC_Errors
+# role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+
+# ProMed - Errors
+# role_names = ["Status", "Country", "Disease", "Victims"]
+
+# SciREX - Errors
+role_names = ["Material", "Method", "Metric", "Task"]
 
 error_names = [
     "Span_Error",
@@ -90,6 +96,7 @@ class Result:
         self.spurious_rfs = []
         self.missing_rfs = []
         self.transformations = []
+        self.valid_trans = []
         self.transformed_data = []
 
     def __str__(self, verbosity=4):
@@ -98,19 +105,20 @@ class Result:
         pair_count = 0
         if verbosity == 2 or verbosity == 4:
             result_string += "Transformations:"
-            for trans in self.transformations:
+            for tidx, trans in enumerate(self.transformations):
                 if trans == "\n":
                     result_string += "\n\n"
                     pair_count += 1
                     result_string += "Template Pair " + str(pair_count) + ":"
-                elif trans[2][0] == "Alter_Role":
+                elif trans[2][0] == "Alter_Role" and self.valid_trans[tidx]:
                     result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
                     result_string += "\n  From " + trans[0] + ": " + str(trans[1]) + " to " + trans[3] + ": " + str(trans[1]) 
                     if len(trans[2]) != 1:
                         result_string += " to None"
                 else:
-                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
-                    result_string += "\n  " + str(trans[0]) + ": From " + str(trans[1]) + " to " + str(trans[3])
+                    if self.valid_trans[tidx]:
+                        result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                        result_string += "\n  " + str(trans[0]) + ": From " + str(trans[1]) + " to " + str(trans[3])
             if verbosity == 4: result_string += "\n\n"
 
         if verbosity == 3 or verbosity == 4:
@@ -177,6 +185,7 @@ class Result:
         result.missing_rfs = result1.missing_rfs + result2.missing_rfs
 
         result.transformations = result1.transformations + result2.transformations
+        result.valid_trans = result1.valid_trans + result2.valid_trans
 
         result.transformed_data = result1.transformed_data + result2.transformed_data
 
@@ -214,8 +223,31 @@ class Result:
                 hand_mprfs[str(template)] = {}
                 hand_mprfs[str(template)][role_name] = [mention for mention in corefs]
 
-        for trans in self.transformations:
-            
+        temp_pos = -1
+        altered_transformations = []
+        remove_transformations = []
+        for ind, trans in enumerate(self.transformations):
+            if trans == "\n":
+                altered_transformations.append(trans)
+                temp_pos = ind + 1
+            elif trans[2] == ["Alter_Role"]:
+                altered_transformations.insert(temp_pos, trans)
+                mis = (trans[3], None, ["Introduce_Missing_Role_Filler"], trans[1])
+                remove_transformations.append(mis)
+            else:
+                altered_transformations.append(trans)
+
+        for trans in altered_transformations:
+            try:
+                idx = remove_transformations.index(trans)
+                self.valid_trans.append(False)
+                self.errors["Missing_Role_Filler"] -= 1
+            except:
+                self.valid_trans.append(True)
+
+        self.transformations = altered_transformations
+
+        for tidx, trans in enumerate(self.transformations):       
             if trans == "\n":
                 pair_count += 1
                 if pred_templates[pair_count] == None:
@@ -236,10 +268,15 @@ class Result:
                     idx = pred_templates[pair_count][trans[0]].index(trans[1])
                     _ = pred_templates[pair_count][trans[0]].pop(idx)
                     
-                    if trans[1] in pred_templates[pair_count][trans[3]] or trans[1] in hand_sprfs[str(org_pred_templates[pair_count])]:
+                    if trans[1] in pred_templates[pair_count][trans[3]]:
                         continue
                     else:
-                        pred_templates[pair_count][trans[3]].append(trans[1])
+                        try:
+                           if trans[1] in hand_mprfs[str(org_pred_templates[pair_count])][trans[3]]:
+                               pred_templates[pair_count][trans[3]].append(trans[1])
+                        except:
+                            continue
+                        
             elif trans[2] == ["Remove_Cross_Template_Spurious_Role_Filler"]:
                 if pred_templates[pair_count] != None:
                     idx = pred_templates[pair_count][trans[0]].index(trans[1])
@@ -281,7 +318,7 @@ class Result:
                     idx = pred_templates[pair_count][trans[0]].index(trans[1])
                     _ = pred_templates[pair_count][trans[0]].pop(idx)
             elif trans[2] == ["Introduce_Missing_Role_Filler"]:
-                if pred_templates[pair_count] != None:
+                if pred_templates[pair_count] != None and self.valid_trans[tidx]:
                     if trans[3] in pred_templates[pair_count][trans[0]]:
                         continue
                     else:
@@ -566,7 +603,11 @@ def analyze(
 
     def handle_spurious_rfs(best_result, best_matching):
 
-        for pred_template, pred_role_name, pred_mention in best_result.spurious_rfs:
+        remove_sprfs = []
+
+        for ridx, sprf in enumerate(best_result.spurious_rfs):
+
+            pred_template, pred_role_name, pred_mention = sprf
 
             transform_idx = best_result.transformations.index(("", "", ["Remove_Spurious_Role_Filler"], ""))
 
@@ -585,6 +626,7 @@ def analyze(
                             if role_name != pred_role_name:
                                 best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role"], role_name)
                                 best_result.errors["Within_Template_Incorrect_Role"] += 1
+                                remove_sprfs.append(ridx)
                                 error_found = True
                                 break
                             else:
@@ -633,6 +675,12 @@ def analyze(
                 if not error_found:
                     best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Unrelated_Spurious_Role_Filler"], None)
                     best_result.errors["Spurious_Role_Filler"] += 1
+
+        
+        for r in remove_sprfs:
+            best_result.spurious_rfs[r] = "Removed"
+
+        best_result.spurious_rfs = [sprf for sprf in best_result.spurious_rfs if sprf != "Removed"]
 
     handle_spurious_rfs(best_result, best_matching)
     best_result.compute(best_matching, docid)
@@ -851,8 +899,6 @@ def main():
         scoring_mode = "All_Templates"
 
     data, docs = from_file(input_file, mode)
-
-    transformed_data = []
 
     output_file.write("\nANALYZING DATA AND APPLYING TRANSFORMATIONS ...")
 
