@@ -47,7 +47,9 @@ error_names = [
     "Spurious_Role_Filler",
     "Missing_Role_Filler",
     "Spurious_Template",
-    "Missing_Template"
+    "Spurious_Template_Role_Filler",
+    "Missing_Template",
+    "Missing_Template_Role_Filler",
 ]
 
 transformation_names = [
@@ -361,7 +363,7 @@ def analyze(
             for matching in template_matches(predicted_templates[1:], gold_templates):
                 yield [(predicted_templates[0], None)] + matching
             for i in range(len(gold_templates)):
-                if mode == "Errors" or (
+                if mode == "Errors" or (mode == "MUC_Errors" and
                     predicted_templates[0]["incident_type"]
                     == gold_templates[i]["incident_type"]
                 ):
@@ -437,8 +439,8 @@ def analyze(
                             pairwise_result.stats["total"]["r_den"] += 1
                             pairwise_result.error_score += 1
                             if mode in ["MUC_Errors", "Errors"]:
+                                pairwise_result.errors["Missing_Template_Role_Filler"] += 1
                                 continue
-                                pairwise_result.errors["Missing_Role_Filler"] += 1
                                 pairwise_result.transformations.append((role_name, None, ["Introduce_Missing_Role_Filler"], gold_mention[0]))
                                 pairwise_result.missing_rfs.append(
                                             (
@@ -465,9 +467,9 @@ def analyze(
                             pairwise_result.stats[role_name]["p_den"] += 1
                             pairwise_result.stats["total"]["p_den"] += 1
                             pairwise_result.error_score += 1
-                            continue
                             if mode in ["MUC_Errors", "Errors"]:
-                                pairwise_result.errors["Spurious_Role_Filler"] += 1
+                                pairwise_result.errors["Spurious_Template_Role_Filler"] += 1
+                                continue
                                 pairwise_result.spurious_rfs.append(
                                     (template_pair[0], role_name, pred_mention)
                                 )
