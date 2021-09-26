@@ -2,19 +2,30 @@ import time
 
 start = time.time()
 
-import json, re, argparse, textwrap, copy
+import json, re, argparse, textwrap, copy, numpy
 from tqdm import tqdm
 import psutil, os
 
+
 def process_memory():
+    """
+    Returns the non-swapped physical memory used by the 
+    current process at the time of function invocation.
+    """
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
     return mem_info.rss
   
+
 # decorator function
 def profile(func):
+    """
+    Returns the total non-swapped physical memory used by the 
+    function [func] during its execution.
+    :param func: A function whose memory consumption you want to calculate
+    :type func: function 
+    """
     def wrapper(*args, **kwargs):
-  
         mem_before = process_memory()
         result = func(*args, **kwargs)
         mem_after = process_memory()
@@ -24,14 +35,16 @@ def profile(func):
         return result
     return wrapper
 
-# MUC - MUC_Errors
+# ADD LIST OF ROLE NAMES HERE USING GLOBAL VARIABLE [role_names]
+
+# MUC - mode = MUC_Errors
 # role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
 
-# ProMed - Errors
-# role_names = ["Status", "Country", "Disease", "Victims"]
+# ProMed - mode = Errors
+role_names = ["Status", "Country", "Disease", "Victims"]
 
-# SciREX - Errors
-role_names = ["Material", "Method", "Metric", "Task"]
+# SciREX - mode = Errors
+# role_names = ["Material", "Method", "Metric", "Task"]
 
 error_names = [
     "Span_Error",
@@ -49,7 +62,7 @@ error_names = [
     "Spurious_Template",
     "Spurious_Template_Role_Filler",
     "Missing_Template",
-    "Missing_Template_Role_Filler",
+    "Missing_Template_Role_Filler"
 ]
 
 transformation_names = [
@@ -65,6 +78,15 @@ transformation_names = [
 
 
 def summary_to_str(templates, mode):
+    """
+    Returns the string representation of a list of templates 
+    [templates] depending on the evaluation mode [mode].
+    :param templates: A list of templates 
+    :type templates: list[dictionary]
+    :param mode: The evaluation mode used, can be either "MUC_Errors" or 
+                "Errors"
+    :type mode: string
+    """
     result_string = "Summary:"
     for template in templates:
         if template is None:
@@ -79,6 +101,45 @@ def summary_to_str(templates, mode):
                 continue
             result_string += "\n| |-" + k + ": " + ", ".join([str(i) for i in v])
     return result_string
+
+
+def span_scorer(span1, span2, span_mode="geometric_mean"):
+    """
+    Returns the Span Comparison Score (SCS) between the two start-end span index
+    pairs [span1] and [span2] calculated using [span_mode]. The lower the SCS,
+    the more the two span overlap. SCS ranges between 0 and 1 inclusive.
+    If SCS = 0, the two spans are exactly the same, 
+    if SCS = 1, there is no overlap between the spans, and 
+    if 0 < SCS < 1, there is some overlap between the spans.
+    :param span1: The first start-end span index tuple (usually for the predicted span)
+                  The first element of the 2-tuple is the starting index of the span
+                  and the second element of the 2-tuple is the ending index of the span
+    :type span1: tuple(int, int)
+    :param span2: The second start-end span index tuple (usually for a gold span)
+                  The first element of the 2-tuple is the starting index of the span
+                  and the second element of the 2-tuple is the ending index of the span
+    :type span2: tuple(int, int)
+    :param span_mode: The metric used to calculate the Span Comparison Score (SCS),
+                      can be only one of two modes - "gemetric mean" and "absolute"
+                      By default, [span_mode] is "geometric mean"
+    :type span_mode: string
+    """        
+    # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
+    if span1 == span2:
+        return 0
+    length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
+    if span_mode == "absolute":
+        val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
+            length1 + length2
+        )
+        return min(val, 1.0)
+    elif span_mode == "geometric_mean":
+        intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
+        return 1 - (
+            ((intersection ** 2) / (length1 * length2))
+            if length1 * length2 > 0
+            else 0
+        )
 
 
 class Result:
@@ -112,6 +173,18 @@ class Result:
                     result_string += "\n\n"
                     pair_count += 1
                     result_string += "Template Pair " + str(pair_count) + ":"
+                elif trans[2] == ["Alter_Span", "Alter_Role"] and self.valid_trans[tidx]:
+                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                    result_string += "\n  From " + trans[0] + ": " + str(trans[1]) + " to " + trans[0] + ": " + str(trans[4]) + " to " + trans[3] + ": " + str(trans[4])
+                elif trans[2] == ["Alter_Span", "Remove_Duplicate_Role_Filler"] and self.valid_trans[tidx]:
+                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                    result_string += "\n  " + str(trans[0]) + ": From " + str(trans[1]) + " to " + str(trans[4]) + " to " + str(trans[3])
+                elif trans[2] == ["Alter_Span", "Remove_Cross_Template_Spurious_Role_Filler"] and self.valid_trans[tidx]:
+                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                    result_string += "\n  " + str(trans[0]) + ": From " + str(trans[1]) + " to " + str(trans[5]) + " to " + str(trans[3])
+                elif trans[2] == ["Alter_Span", "Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"] and self.valid_trans[tidx]:
+                    result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
+                    result_string += "\n  From " + trans[0] + ": " + str(trans[1]) + " to " + trans[0] + ": " + str(trans[5]) + " to " + trans[3] + ": " + str(trans[5]) + " to None"
                 elif trans[2][0] == "Alter_Role" and self.valid_trans[tidx]:
                     result_string += "\n|-" + " -> ".join([transform for transform in trans[2]]) + ":"
                     result_string += "\n  From " + trans[0] + ": " + str(trans[1]) + " to " + trans[3] + ": " + str(trans[1]) 
@@ -232,9 +305,13 @@ class Result:
             if trans == "\n":
                 altered_transformations.append(trans)
                 temp_pos = ind + 1
-            elif trans[2] == ["Alter_Role"]:
+            elif trans[2] == ["Alter_Role"]: 
                 altered_transformations.insert(temp_pos, trans)
                 mis = (trans[3], None, ["Introduce_Missing_Role_Filler"], trans[1])
+                remove_transformations.append(mis)
+            elif trans[2] == ["Alter_Span", "Alter_Role"]:
+                altered_transformations.insert(temp_pos, trans)
+                mis = (trans[3], None, ["Introduce_Missing_Role_Filler"], trans[4])
                 remove_transformations.append(mis)
             else:
                 altered_transformations.append(trans)
@@ -249,7 +326,7 @@ class Result:
 
         self.transformations = altered_transformations
 
-        for tidx, trans in enumerate(self.transformations):       
+        for tidx, trans in enumerate(self.transformations):    
             if trans == "\n":
                 pair_count += 1
                 if pred_templates[pair_count] == None:
@@ -261,7 +338,11 @@ class Result:
                     continue
                 else:
                     pred_templates[pair_count][trans[0]][idx] = trans[3]
-            elif trans[2] == ["Remove_Duplicate_Role_Filler"] :
+            elif trans[2] == ["Remove_Duplicate_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+            elif trans[2] == ["Alter_Span", "Remove_Duplicate_Role_Filler"]:
                 if pred_templates[pair_count] != None:
                     idx = pred_templates[pair_count][trans[0]].index(trans[1])
                     _ = pred_templates[pair_count][trans[0]].pop(idx)
@@ -276,6 +357,19 @@ class Result:
                         try:
                            if trans[1] in hand_mprfs[str(org_pred_templates[pair_count])][trans[3]]:
                                pred_templates[pair_count][trans[3]].append(trans[1])
+                        except:
+                            continue
+            elif trans[2] == ["Alter_Span", "Alter_Role"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+                    
+                    if trans[4] in pred_templates[pair_count][trans[3]]:
+                        continue
+                    else:
+                        try:
+                           if trans[4] in hand_mprfs[str(org_pred_templates[pair_count])][trans[3]]:
+                               pred_templates[pair_count][trans[3]].append(trans[4])
                         except:
                             continue
                         
@@ -298,6 +392,25 @@ class Result:
                             except:
                                 continue
 
+            elif trans[2] == ["Alter_Span", "Remove_Cross_Template_Spurious_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+
+                    temp_idx = gold_templates.index(trans[4])
+                    if pred_templates[temp_idx] == None:
+                        pred_templates[temp_idx] = copy.deepcopy(org_pred_templates[temp_idx])
+                    
+                    if org_pred_templates[temp_idx] != None and pred_templates[temp_idx] != "Removed":
+                        if (trans[5] in pred_templates[temp_idx][trans[0]]):
+                            continue
+                        else:
+                            try:
+                                if trans[5] in hand_mprfs[str(org_pred_templates[temp_idx])][trans[0]] and trans[5] not in hand_sprfs[str(org_pred_templates[temp_idx])]:
+                                    pred_templates[temp_idx][trans[0]].append(trans[5])
+                            except:
+                                continue
+
             elif trans[2] == ["Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"]:
                 if pred_templates[pair_count] != None:
                     idx = pred_templates[pair_count][trans[0]].index(trans[1])
@@ -312,6 +425,23 @@ class Result:
                             try:
                                 if trans[1] in hand_mprfs[str(org_pred_templates[temp_idx])][trans[3]] and trans[1] not in hand_sprfs[str(org_pred_templates[temp_idx])]:
                                     pred_templates[temp_idx][trans[3]].append(trans[1])
+                            except:
+                                continue
+
+            elif trans[2] == ["Alter_Span", "Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"]:
+                if pred_templates[pair_count] != None:
+                    idx = pred_templates[pair_count][trans[0]].index(trans[1])
+                    _ = pred_templates[pair_count][trans[0]].pop(idx)
+                    temp_idx = gold_templates.index(trans[4])
+                    if pred_templates[temp_idx] == None:
+                        pred_templates[temp_idx] = copy.deepcopy(org_pred_templates[temp_idx])
+                    if org_pred_templates[temp_idx] != None and pred_templates[temp_idx] != "Removed":
+                        if trans[5] in pred_templates[temp_idx][trans[3]]:
+                            continue
+                        else:
+                            try:
+                                if trans[5] in hand_mprfs[str(org_pred_templates[temp_idx])][trans[3]] and trans[1] not in hand_sprfs[str(org_pred_templates[temp_idx])]:
+                                    pred_templates[temp_idx][trans[3]].append(trans[5])
                             except:
                                 continue
                         
@@ -398,24 +528,6 @@ def analyze(
                         yield [
                             (predicted_mentions[0], gold_mentions[i], best_score, best_gold_mention)
                         ] + matching
-
-        def span_scorer(span1, span2, span_mode="geometric_mean"):
-            # Lower is better - 0 iff exact match, 1 iff no intersection, otherwise between 0 and 1
-            if span1 == span2:
-                return 0
-            length1, length2 = abs(span1[1] - span1[0]), abs(span2[1] - span2[0])
-            if span_mode == "absolute":
-                val = (abs(span1[0] - span2[0]) + abs(span1[1] - span2[1])) / (
-                    length1 + length2
-                )
-                return min(val, 1.0)
-            elif span_mode == "geometric_mean":
-                intersection = max(0, min(span1[1], span2[1]) - max(span1[0], span2[0]))
-                return 1 - (
-                    ((intersection ** 2) / (length1 * length2))
-                    if length1 * length2 > 0
-                    else 0
-                )
 
         result = Result()
         for template_pair in template_matching:
@@ -619,66 +731,72 @@ def analyze(
             for template_pair in best_matching:
                 if template_pair[0] == pred_template:
                     matched_gold_template = template_pair[1]
-                    for role_name in role_names:
-                        if matched_gold_template != None and pred_mention in [
-                            mention
-                            for corefs in matched_gold_template[role_name]
-                            for mention in corefs
-                        ]:
-                            if role_name != pred_role_name:
-                                best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role"], role_name)
-                                best_result.errors["Within_Template_Incorrect_Role"] += 1
-                                remove_sprfs.append(ridx)
-                                error_found = True
-                                break
-                            else:
-                                best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Duplicate_Role_Filler"], None)
-                                best_result.errors["Duplicate_Role_Filler"] += 1
-                                error_found = True
-                                break
+                    if matched_gold_template != None:
+                        gold_mention_lst = [(mention, role_name) for role_name in role_names for corefs in matched_gold_template[role_name] for mention in corefs if type(matched_gold_template[role_name]) == list]
+                        if gold_mention_lst != []:
+                            span_score_lst = numpy.array([span_scorer(pred_mention[0], mention[0][0]) for mention in gold_mention_lst])
+                            min_score = numpy.min(span_score_lst)
+                            min_ind = numpy.argmin(span_score_lst)
+                            best_gold_mention, role_name = gold_mention_lst[min_ind]
+                            if min_score < 1:
+                                if role_name != pred_role_name:
+                                    if min_score == 0:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role"], role_name)
+                                        best_result.errors["Within_Template_Incorrect_Role"] += 1
+                                        remove_sprfs.append(ridx)
+                                        error_found = True
+                                    else:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Span", "Alter_Role"], role_name, best_gold_mention)
+                                        best_result.errors["Within_Template_Incorrect_Role + Partially_Matched_Filler"] += 1
+                                        remove_sprfs.append(ridx)
+                                        error_found = True
+                                    break
+                                else:
+                                    if min_score == 0:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Duplicate_Role_Filler"], None)
+                                        best_result.errors["Duplicate_Role_Filler"] += 1
+                                        error_found = True
+                                    else:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Span", "Remove_Duplicate_Role_Filler"], None, best_gold_mention)
+                                        best_result.errors["Duplicate_Partially_Matched_Role_Filler"] += 1
+                                        error_found = True
+                                    break
 
-                    break
-
-            if error_found:
-                continue
-            else:
-
-                for role_name in role_names:
-                    gold_mention_lst = []
-                    gold_template_idxs = []
-                    i = 0
-                    for gold_template in gold_templates:
-                        if (
-                            matched_gold_template != None
-                            and gold_template != matched_gold_template
-                        ):
-                            temp_lst = [
-                                mention
-                                for corefs in gold_template[role_name]
-                                for mention in corefs
-                            ]
-                            gold_mention_lst += temp_lst
-                            gold_template_idxs += [i]*len(temp_lst)
-                        i += 1
-                    try:
-                        idx = gold_mention_lst.index(pred_mention)
-                        gold_idx = gold_template_idxs[idx]
-                        if pred_role_name != role_name:
-                            best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"], role_name, gold_templates[gold_idx])
-                            best_result.errors["Wrong_Template + Wrong_Role"] += 1
-                        else:
-                            best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Cross_Template_Spurious_Role_Filler"], None, gold_templates[gold_idx])
-                            best_result.errors["Wrong_Template_For_Role_Filler"] += 1
-                        error_found = True
-                        break
-                    except:
+                    if error_found:
                         continue
+                    else:
 
-                if not error_found:
-                    best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Unrelated_Spurious_Role_Filler"], None)
-                    best_result.errors["Spurious_Role_Filler"] += 1
+                        gold_mention_lst = [(mention, role_name, gold_idx) for role_name in role_names for gold_idx, gold_template in enumerate(gold_templates) for corefs in gold_template[role_name] for mention in corefs if type(gold_template[role_name]) == list 
+                                            and matched_gold_template != None and gold_template != matched_gold_template]
 
-        
+                        if gold_mention_lst != []:
+                            span_score_lst = numpy.array([span_scorer(pred_mention[0], mention[0][0]) for mention in gold_mention_lst])
+                            min_score = numpy.min(span_score_lst)
+                            min_ind = numpy.argmin(span_score_lst)
+                            best_gold_mention, role_name, gold_idx = gold_mention_lst[min_ind]
+                            
+                            if min_score < 1:
+                                if pred_role_name != role_name:
+                                    if min_score == 0:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"], role_name, gold_templates[gold_idx])
+                                        best_result.errors["Wrong_Template + Wrong_Role"] += 1
+                                    else:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Span", "Alter_Role", "Remove_Cross_Template_Spurious_Role_Filler"], role_name, gold_templates[gold_idx], best_gold_mention)
+                                        best_result.errors["Wrong_Template + Wrong_Role + Partially_Matched_Filler"] += 1 
+                                else:
+                                    if min_score == 0:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Cross_Template_Spurious_Role_Filler"], None, gold_templates[gold_idx])
+                                        best_result.errors["Wrong_Template_For_Role_Filler"] += 1
+                                    else:
+                                        best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Alter_Span", "Remove_Cross_Template_Spurious_Role_Filler"], None, gold_templates[gold_idx], best_gold_mention)
+                                        best_result.errors["Wrong_Template_For_Partially_Matched_Role_Filler"] += 1
+                                error_found = True
+                                break
+
+                        if not error_found:
+                            best_result.transformations[transform_idx] = (pred_role_name, pred_mention, ["Remove_Unrelated_Spurious_Role_Filler"], None)
+                            best_result.errors["Spurious_Role_Filler"] += 1
+
         for r in remove_sprfs:
             best_result.spurious_rfs[r] = "Removed"
 
@@ -699,7 +817,7 @@ def from_file(input_file, mode):
     templates, the second contains the gold templates.
     The tokenized documents consists of a dictionary with keys as doc ids
     and respective tokenized documents as values.
-    :params input_file: valid path to input file
+    :param input_file: valid path to input file
     :type input_file: string
     """
 
@@ -717,9 +835,9 @@ def from_file(input_file, mode):
         the list of document tokens, this function
         returns the start index as 1 and the end index as 0.
         :param doc: List of document tokens
-        :type doc: List[strings]
+        :type doc: list[string]
         :param mention: List of mention tokens
-        :type mention: List[strings]
+        :type mention: list[string]
         """
         start, end = -1, -1
         if len(mention) == 0:
