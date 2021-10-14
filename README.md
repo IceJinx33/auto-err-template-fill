@@ -1,6 +1,6 @@
 # auto-err-template-fill
 
-INSTALLATION
+## INSTALLATION
 
 Requires the use of Python 3.6 and above. Please install the following packages:
 
@@ -23,7 +23,7 @@ psutil
 os
 
 
-USAGE 
+## USAGE 
 
 Error_Analysis.py script command line arguments:
 
@@ -67,7 +67,7 @@ Error_Analysis.py script command line arguments:
   
     The path to the output file the system writes to
                         
-EXAMPLE:
+## EXAMPLE:
 
 - For MUC data:
 
