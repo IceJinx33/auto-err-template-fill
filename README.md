@@ -3,23 +3,23 @@
 Requires the use of Python 3.6 and above. Please install the following packages:
 
 ``
-1.json
+json
 
-2.re
+re
 
-3.argparse
+argparse
 
-4.textwrap
+textwrap
 
-5.copy
+copy
 
-6.numpy
+numpy
 
-7.tqdm
+tqdm
 
-8.psutil
+psutil
 
-9.os
+os
 ``
 
 Error_Analysis.py script command line arguments:
