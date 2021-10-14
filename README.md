@@ -27,13 +27,21 @@ USAGE
 
 Error_Analysis.py script command line arguments:
 
-  -h, --help            show this help message and exit
+  -h, --help            
   
-  -i INPUT_FILE, --input_file INPUT_FILE            The path to the input file given to the system
+    show this help message and exit
+  
+  -i INPUT_FILE, --input_file INPUT_FILE            
+  
+    The path to the input file given to the system
                         
-  -v, --verbose         Increase output verbosity
+  -v, --verbose         
   
-  -at, --analyze_transformed            Analyze transformed data
+    Increase output verbosity
+  
+  -at, --analyze_transformed            
+  
+    Analyze transformed data
                         
   -s {all,msp,mmi,mat}, --scoring_mode {all,msp,mmi,mat}
   
@@ -55,7 +63,9 @@ Error_Analysis.py script command line arguments:
 
     2. Errors - General evaluation with no added constraints
                         
-  -o OUTPUT_FILE, --output_file OUTPUT_FILE            The path to the output file the system writes to
+  -o OUTPUT_FILE, --output_file OUTPUT_FILE            
+  
+    The path to the output file the system writes to
                         
 EXAMPLE:
 
