@@ -2,15 +2,25 @@
 
 Requires the use of Python 3.6 and above. Please install the following packages:
 
+``
 1.json
+
 2.re
+
 3.argparse
+
 4.textwrap
+
 5.copy
+
 6.numpy
+
 7.tqdm
+
 8.psutil
+
 9.os
+``
 
 Error_Analysis.py script command line arguments:
 
