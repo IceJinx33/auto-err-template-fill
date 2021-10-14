@@ -18,37 +18,37 @@ Error_Analysis.py script command line arguments:
   
   -i INPUT_FILE, --input_file INPUT_FILE
   
-                        The path to the input file given to the system
+  The path to the input file given to the system
                         
   -v, --verbose         Increase output verbosity
   
   -at, --analyze_transformed
   
-                        Analyze transformed data
+  Analyze transformed data
                         
   -s {all,msp,mmi,mat}, --scoring_mode {all,msp,mmi,mat}
   
-                        Choose scoring mode according to MUC:
+  Choose scoring mode according to MUC:
                         
-                        all - All Templates
+  1. all - All Templates
                         
-                        msp - Matched/Spurious
+  2. msp - Matched/Spurious
                         
-                        mmi - Matched/Missing
+  3. mmi - Matched/Missing
                         
-                        mat - Matched Only
+  4. mat - Matched Only
                         
   -m {MUC_Errors,Errors}, --mode {MUC_Errors,Errors}
   
-                        Choose evaluation mode:
+  Choose evaluation mode:
                         
-                        MUC_Errors - MUC evaluation with added constraint of incident_types of templates needing to match
+  1. MUC_Errors - MUC evaluation with added constraint of incident_types of templates needing to match
                         
-                        Errors - General evaluation with no added constraints
+  2. Errors - General evaluation with no added constraints
                         
   -o OUTPUT_FILE, --output_file OUTPUT_FILE
   
-                        The path to the output file the system writes to
+  The path to the output file the system writes to
                         
 Usage:
 
