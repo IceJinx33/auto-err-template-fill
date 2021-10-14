@@ -2,7 +2,6 @@
 
 Requires the use of Python 3.6 and above. Please install the following packages:
 
-``
 json
 
 re
@@ -20,7 +19,7 @@ tqdm
 psutil
 
 os
-``
+
 
 Error_Analysis.py script command line arguments:
 
