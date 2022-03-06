@@ -5,6 +5,8 @@ start = time.time()
 import json, re, argparse, textwrap, copy, numpy
 from tqdm import tqdm
 import psutil, os
+import spacy
+nlp = spacy.load("en_core_web_sm")
 
 
 def process_memory():
@@ -38,10 +40,10 @@ def profile(func):
 # ADD LIST OF ROLE NAMES HERE USING GLOBAL VARIABLE [role_names]
 
 # MUC - mode = MUC_Errors
-# role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
+role_names = ["incident_type", "PerpInd", "PerpOrg", "Target", "Weapon", "Victim"]
 
 # ProMed - mode = Errors
-role_names = ["Status", "Country", "Disease", "Victims"]
+# role_names = ["Status", "Country", "Disease", "Victims"]
 
 # SciREX - mode = Errors
 # role_names = ["Material", "Method", "Metric", "Task"]
@@ -142,6 +144,62 @@ def span_scorer(span1, span2, span_mode="geometric_mean"):
         )
 
 
+def extract_span_diff(string1, diff, start):
+    """
+    This functions returns a string containing [diff] number of consecutive 
+    alphanumeric characters from [string1] as well as any non-alphanumeric 
+    characters it encounters while searching for alphanumeric characters. If 
+    [start] = True, extraction starts from the beginning of the string, otherwise,
+    extraction begins at the end of the string.
+    :params string1: the input string
+    :type string1: string
+    :params diff: the number of alphanumeric characters to extract
+    :type diff: [diff] is an int > 0
+    :params start: whether extraction starts at the beginning ([start] = True)
+    or end of [string1] ([start] = False)
+    :type beg: [start] is an bool
+    """
+    if start == False:
+        string1 = string1[::-1]
+    d = 0
+    s = ""
+    for c in string1:
+        s += c
+        if c.isalnum():
+            d += 1
+        else:
+            continue
+        if d == diff:
+            break
+    if start == False:
+        return s[::-1]
+    else:
+        return s
+
+
+def diff_decide(res, predicted_mention, best_gold_mention):
+    pred_span = predicted_mention[0]
+    gold_span = best_gold_mention[0]
+    diff_1 = pred_span[0] - gold_span[0]
+    diff_2 = pred_span[1] - gold_span[1]
+    if diff_1 > 0:
+        chars = extract_span_diff(best_gold_mention[1], diff_1, True)
+        res.spans.append((chars, "m"))
+    elif diff_1 < 0:
+        chars = extract_span_diff(predicted_mention[1], -diff_1, True)
+        res.spans.append((chars, "e"))
+    else:
+        pass
+    if diff_2 > 0:
+        chars = extract_span_diff(predicted_mention[1], diff_2, False)
+        res.spans.append((chars, "e"))
+    elif diff_2 < 0:
+        chars = extract_span_diff(best_gold_mention[1], -diff_2, False)
+        res.spans.append((chars, "m"))
+    else:
+        pass
+
+
 class Result:
     def __init__(self):
         self.valid = True
@@ -161,6 +219,13 @@ class Result:
         self.transformations = []
         self.valid_trans = []
         self.transformed_data = []
+        self.spans = []
+        self.missing_roles = {}
+        self.incorrect_roles = {}
+
+        for role_name in role_names:
+            self.missing_roles[role_name] = 0
+            self.incorrect_roles[role_name] = 0
 
     def __str__(self, verbosity=4):
         
@@ -269,6 +334,11 @@ class Result:
                 result1.errors[error_name] + result2.errors[error_name]
             )
 
+        result.spans = result1.spans + result2.spans
+
+        for role_name in result.missing_roles:
+            result.missing_roles[role_name] = result1.missing_roles[role_name] + result2.missing_roles[role_name]
+            result.incorrect_roles[role_name] = result1.incorrect_roles[role_name] + result2.incorrect_roles[role_name]
         return result
 
     def compute(self, template_matching, docid):
@@ -351,6 +421,8 @@ class Result:
                     idx = pred_templates[pair_count][trans[0]].index(trans[1])
                     _ = pred_templates[pair_count][trans[0]].pop(idx)
                     
+                    self.incorrect_roles[trans[3]] += 1
+
                     if trans[1] in pred_templates[pair_count][trans[3]]:
                         continue
                     else:
@@ -451,6 +523,7 @@ class Result:
                     _ = pred_templates[pair_count][trans[0]].pop(idx)
             elif trans[2] == ["Introduce_Missing_Role_Filler"]:
                 if pred_templates[pair_count] != None and self.valid_trans[tidx]:
+                    self.missing_roles[trans[0]] += 1
                     if trans[3] in pred_templates[pair_count][trans[0]]:
                         continue
                     else:
@@ -669,6 +742,7 @@ def analyze(
                                         matching_result.errors["Span_Error"] += 1
                                         matching_result.transformations.append((role_name, mention_pair[0], ["Alter_Span"], mention_pair[3]))
                                         
+                                        diff_decide(matching_result, mention_pair[0], mention_pair[3])
                                     if (
                                         mode in ["MUC_Errors", "Errors"]
                                         and mention_pair[2] == 1
@@ -1096,10 +1170,44 @@ def main():
         output_file.write("\n\n" + total_result_after.__str__(verbosity=3))
 
     output_file.close()
+    
+    print("\n----------------------")
+    print("SPAN ERRORS:\n")
+    missing_span = {}
+    extra_span = {}
+    for span, me in total_result_before.spans:
+        st = nlp(span)
+        for token in st:
+            pos = token.pos_
+            print((token, pos, "missing" if me == "m" else "extra"))
+            if me == "m":
+                try:
+                    missing_span[pos] += 1
+                except:
+                    missing_span[pos] = 1
+            else:
+                try:
+                    extra_span[pos] += 1
+                except:
+                    extra_span[pos] = 1
+
+    print("\nMissing span tokens - POS counts \n" + str(missing_span) + "\n")
+    print("Extra span tokens - POS counts \n" + str(extra_span) + "\n")
+    print("----------------------\n")
+
+    print("----------------------")
+    print("MISSING ROLE COUNTS:\n")
+    for role_name, role_count in total_result_before.missing_roles.items():
+       print(role_name + ": " + str(role_count))
+    print("----------------------\n")
+
+    print("----------------------")
+    print("INCORRECT ROLE COUNTS:\n")
+    for role_name, role_count in total_result_before.incorrect_roles.items():
+       print(role_name + ": " + str(role_count))
+    print("----------------------\n")
+
     print("Time: " + str(time.time() - start))
-
-
-
 
 if __name__ == "__main__":
     main()
