@@ -2,9 +2,15 @@
 
 Software for an ACL 2022 Main paper (Link to be posted) 
 
-We build on the work of Kummerfeld and Klein (2013) to propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. From the output, one can further generate graph like below:
+We build on the work of Kummerfeld and Klein (2013) to propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. 
 
-![An example image](./image/image1.png?raw=true)
+![Our workflow](./image/image0.png?raw=true)
+
+From the output, one can further generate a error profile graph like below:
+
+![figure](./image/image1.png?raw=true)
+
+
 
 ## INSTALLATION
 
