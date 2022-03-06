@@ -5,3 +5,6 @@ __pycache__/Error_Analysis.cpython-38.pyc
 ex_err.out
 ex.out
 pointwise_err.out
+*.xml
+.idea/.name
+*.iml
