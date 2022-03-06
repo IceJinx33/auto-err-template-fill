@@ -66,6 +66,11 @@ Error_Analysis.py script command line arguments:
   -o OUTPUT_FILE, --output_file OUTPUT_FILE            
   
     The path to the output file the system writes to
+    
+  -j OUTPUT_JSON, output_json OUTPUT_JSON     
+    The path to the output file the system writes to as JSON
+    
+
                         
 ## EXAMPLE:
 
