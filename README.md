@@ -2,7 +2,7 @@
 
 Software for an ACL 2022 Main paper (Link to be posted) 
 
-We build on the work of Kummerfeld and Klein (2013) to propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. 
+We build propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. 
 
 ![Our workflow](./image/image0.png?raw=true)
 
@@ -10,7 +10,16 @@ From the output, one can further generate a error profile graph like below:
 
 ![figure](./image/image1.png?raw=true)
 
+## Cite
 
+If you use our code or data/outputs, please cite:
+
+	@InProceedings{auto_error,
+	  author = {Aliva Das, Xinya Du, Barry Wang, Kejian Shi, Jiayuan Gu, Thomas Porter and Claire Cardie},
+	  title = {Automatic Error Analysis for Document-level Information Extraction},
+	  booktitle = {Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics},
+	  year = {2022},
+	}
 
 ## INSTALLATION
 
