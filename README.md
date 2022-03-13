@@ -43,6 +43,12 @@ psutil
 
 os
 
+spacy
+
+Also download the en_core_web_sm spaCy model using the following command: 
+
+``python -m spacy download en_core_web_sm``
+
 
 ## USAGE 
 
