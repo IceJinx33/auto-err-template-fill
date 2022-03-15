@@ -111,3 +111,10 @@ Error_Analysis.py script command line arguments:
 ``python3 Error_Analysis.py -i "model_preds.out" -o "err_file.out" --verbose -s all -m "Errors" -at``
 
 Remember to change the global variable **role_names** in the Error_Analysis.py script to match the roles associated with your dataset.
+
+- See the **model_outputs** folder for examples of the input files the Error_Analysis.py script requires to run.
+
+- See the **error_outputs** folder for examples of the outputs given by the Error_Analysis.py script on the input files in the **model_outputs** folder.
+
+- See the **datasets** folder for the processed versions of the datasets (only MUC-4 and SciREX) as well as the scripts used to process the data (all datasets).
+
