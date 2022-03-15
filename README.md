@@ -102,7 +102,7 @@ Error_Analysis.py script command line arguments:
 ​                        
 ## EXAMPLE:
 
-- For MUC data:
+- For MUC-4 data:
 
 ``python3 Error_Analysis.py -i "model_preds.out" -o "err_file.out" --verbose -s all -m "MUC_Errors" -at``
 
