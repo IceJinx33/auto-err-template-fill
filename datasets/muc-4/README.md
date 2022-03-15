@@ -6,6 +6,8 @@
     │   ├── .          
     │   └── .           
     ├── scripts                  # Scripts for preprocessing
+    │   └── . 
+    │   └── . 
     └── muc_proc                 # Raw files & scripts from MUC-{3,4}
     │   ├── muc34.tar.gz		 # original folder for the MUC-{3,4}, 1992
     │   ├── proc_output			 # processed files folder for MUC-{3,4}, 
