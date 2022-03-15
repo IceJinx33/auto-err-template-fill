@@ -2,6 +2,8 @@ import json, argparse
 import numpy as np
 from nltk.tokenize import word_tokenize
 
+# Used to get dataset statistics 
+
 def mention_tokens_index(doc, mention):
         """
         This function returns the starting and ending indexes of the tokenized mention
