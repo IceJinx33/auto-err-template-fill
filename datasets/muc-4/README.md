@@ -10,6 +10,6 @@
     │   ├── muc34.tar.gz		 # original folder for the MUC-{3,4}, 1992
     │   ├── proc_output			 # processed files folder for MUC-{3,4}, 
     │   └── raw_scripts			 # scripts adapted from (github.com/brendano/muc4_proc)
-    └── eval.py        # Used for creating the file used as input of the error analysis tool
+    └── muc_eval.py        # Used for creating the file used as input of the error analysis tool
         
 [brendano samples](http://brenocon.com/muc4_proc/samp200.html)
