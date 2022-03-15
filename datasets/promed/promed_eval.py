@@ -222,7 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--pred_file", default=None, type=str, required=True, help="Predicted output file")
     parser.add_argument("--gold_file", default=None, type=str, required=True, help="Gold file")
     parser.add_argument("--event_n", default=-1, type=str, required=False, help="event n")
-    parser.add_argument("--out_file", default="dygie_promed_preds.out", type=str, required=False, help="Output file for error analysis")
+    parser.add_argument("--out_file", default=None, type=str, required=True, help="File used for error analysis input")
     args = parser.parse_args()
 
     docs = OrderedDict()
@@ -270,9 +270,10 @@ if __name__ == "__main__":
     output_file.write(json.dumps(docs, indent=4))
     output_file.close()
 
-    # Comment out the following lines of code if you do not want to
-    # calculate micro-averaged F1
+    # Uncomment the following lines of code if you want to
+    # calculate micro-averaged F1 for evaluation
     
+    """
     with open("./promed_docids_event_n.json", encoding="utf-8") as f:
         docids_event_n = json.load(f)
 
@@ -320,6 +321,7 @@ if __name__ == "__main__":
         str_print= ["{:.2f}".format(r) for r in str_print]
         print("print: {}".format(" ".join(str_print)))
         print()
+    """
 
         
 

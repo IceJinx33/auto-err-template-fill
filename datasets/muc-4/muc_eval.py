@@ -5,6 +5,9 @@ import json
 import argparse
 from collections import OrderedDict
 import itertools
+
+# Used for creating the file used as input of the error analysis tool
+
 tag2role = OrderedDict({'incident_type':'incident_type', 'perp_individual_id': "PerpInd", 'perp_organization_id': "PerpOrg", 'phys_tgt_id': "Target", 'hum_tgt_name': "Victim", 'incident_instrument_id': "Weapon"})
 
 def normalize_string(s):
@@ -213,10 +216,13 @@ def eval_tf(preds, golds, docids=[]):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pred_file", default=None, type=str, required=False, help="preds output file")
-    parser.add_argument("--gold_file", default="./data/muc/processed/test.json", type=str, required=False, help="gold file")
+    parser.add_argument("--pred_file", default=None, type=str, required=True, help="Predicted output file")
+    parser.add_argument("--gold_file", default="./processed/test.json", type=str, required=True, help="Gold file")
     parser.add_argument("--event_n", default=-1, type=str, required=False, help="event n")
+    parser.add_argument("--out_file", default=None, type=str, required=True, help="File used for error analysis input")
     args = parser.parse_args()
+
+    docs = OrderedDict()
 
     ## get pred and gold extracts
     preds = OrderedDict()
@@ -248,8 +254,20 @@ if __name__ == "__main__":
                 if template not in templates:
                     templates.append(template)
             golds[docid] = templates
+            docs[docid] = {}
+            docs[docid]["doctext"] = line["doctext"]
+            docs[docid]["pred_templates"] = preds[docid]
+            docs[docid]["gold_templates"] = golds[docid]
 
-    with open("./data/muc/processed/docids_event_n.json", encoding="utf-8") as f:
+    output_file = open(args.out_file, "w")
+    output_file.write(json.dumps(docs, indent=4))
+    output_file.close()
+
+    # Uncomment the following lines of code if you want to
+    # calculate micro-averaged F1 for evaluation
+
+    """
+    with open("./processed/docids_event_n.json", encoding="utf-8") as f:
         docids_event_n = json.load(f)
 
     if args.event_n == "1,2,3,4":
@@ -296,7 +314,7 @@ if __name__ == "__main__":
         str_print= ["{:.2f}".format(r) for r in str_print]
         print("print: {}".format(" ".join(str_print)))
         print()
-
+    """
         
 
 
