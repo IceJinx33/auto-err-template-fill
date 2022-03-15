@@ -1,4 +1,4 @@
-# MUC dataset
+# MUC-4 dataset
 
 ### Originally from https://github.com/xinyadu/gtt/tree/master/data/muc
     .
