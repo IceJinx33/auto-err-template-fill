@@ -2,7 +2,7 @@
 
 Software for our ACL 2022 Main Conference Long paper (Link to be posted) 
 
-We build propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. 
+We propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. 
 
 ![Our workflow](./image/image0.png?raw=true)
 
