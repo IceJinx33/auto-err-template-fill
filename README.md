@@ -1,6 +1,6 @@
 # Automatic Error Analysis for Document-level Information Extraction
 
-Software for an ACL 2022 Main Conference paper (Link to be posted) 
+Software for our ACL 2022 Main Conference Long paper (Link to be posted) 
 
 We build propose a transformation-based framework for automating error analysis in document-level event and (N-ary) relation extraction. 
 
